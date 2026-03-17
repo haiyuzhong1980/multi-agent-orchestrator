@@ -22,6 +22,11 @@ export const MultiAgentOrchestratorSchema = {
           label: { type: "string", description: "Human-readable track label." },
           resultText: { type: "string", description: "Raw child-agent result text." },
           required: { type: "boolean", description: "Whether this track is required." },
+          contentType: {
+            type: "string",
+            enum: ["github-url", "text-analysis", "structured-data"],
+            description: "Content type of track results. Determines validation strategy.",
+          },
         },
         required: ["trackId", "resultText"],
       },

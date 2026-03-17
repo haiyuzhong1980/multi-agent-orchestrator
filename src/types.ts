@@ -1,8 +1,11 @@
+export type TrackContentType = "github-url" | "text-analysis" | "structured-data";
+
 export type TrackInput = {
   trackId: string;
   label?: string;
   resultText: string;
   required?: boolean;
+  contentType?: TrackContentType;
 };
 
 export type ExecutionPolicyMode =
@@ -35,6 +38,7 @@ export type PlannedTrack = {
   outputContract: string[];
   failureContract: string[];
   subagentPrompt: string;
+  contentType?: TrackContentType;
 };
 
 export type CandidateItem = {

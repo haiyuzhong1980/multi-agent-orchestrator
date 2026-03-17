@@ -6,6 +6,8 @@ import { createMultiAgentOrchestratorTool, MultiAgentOrchestratorSchema } from "
 import { buildOrchestratorPromptGuidance } from "./src/prompt-guidance.ts";
 import { loadAgentRegistry, searchAgents, getAgentsByCategory } from "./src/agent-registry.ts";
 import { listTemplates, findTemplate } from "./src/track-templates.ts";
+import { createAuditLog, logEvent, formatAuditReport } from "./src/audit-log.ts";
+import { createSessionState, getMissingTracks } from "./src/session-state.ts";
 
 const OFMS_SHARED_ROOT =
   process.env.OFMS_SHARED_ROOT ?? join(process.env.HOME ?? "", ".openclaw/shared-memory");
@@ -27,12 +29,18 @@ export default function register(api: OpenClawPluginApi) {
     pluginConfig.delegationStartGate === "required"
       ? pluginConfig.delegationStartGate
       : "required";
+
+  const auditLog = createAuditLog(200);
+  const sessionState = createSessionState();
+
   const tool = createMultiAgentOrchestratorTool({
     executionPolicy,
     delegationStartGate,
     maxItemsPerTrack:
       typeof pluginConfig.maxItemsPerTrack === "number" ? pluginConfig.maxItemsPerTrack : 8,
     logger: (message) => api.logger.info(`[multi-agent-orchestrator] ${message}`),
+    sessionState,
+    auditLog,
   });
 
   // Wrap the raw JSON Schema in a TypeBox TSchema so the tool conforms to AnyAgentTool
@@ -54,6 +62,31 @@ export default function register(api: OpenClawPluginApi) {
       return { appendSystemContext: guidance };
     });
   }
+
+  api.on("before_tool_call", async (event: Record<string, unknown>) => {
+    const blockReason = event.blockReason as string | undefined;
+    if (blockReason) {
+      logEvent(auditLog, "tool_blocked", { toolName: event.toolName, reason: blockReason });
+    }
+    return undefined;
+  });
+
+  api.on("subagent_spawned", async (event: Record<string, unknown>) => {
+    logEvent(auditLog, "subagent_spawned", {
+      sessionKey: event.childSessionKey,
+      agentId: event.agentId,
+      label: event.label,
+    });
+    return undefined;
+  });
+
+  api.on("subagent_ended", async (event: Record<string, unknown>) => {
+    logEvent(auditLog, "subagent_ended", {
+      sessionKey: event.targetSessionKey,
+      outcome: event.outcome,
+    });
+    return undefined;
+  });
 
   const AGENT_REGISTRY_PATH =
     process.env.AGENCY_AGENTS_PATH ?? join(process.env.HOME ?? "", "Documents/agency-agents-backup");
@@ -146,6 +179,35 @@ export default function register(api: OpenClawPluginApi) {
           `Output contract:\n${template.outputContract.map((c) => `- ${c}`).join("\n")}`,
           `Failure contract:\n${template.failureContract.map((c) => `- ${c}`).join("\n")}`,
         ].join("\n"),
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-audit",
+    description: "Show recent orchestration audit log",
+    handler: () => {
+      const report = formatAuditReport(auditLog, 30);
+      return { text: report || "No audit events recorded." };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-state",
+    description: "Show current orchestration session state",
+    handler: () => {
+      const missing = getMissingTracks(sessionState);
+      return {
+        text: JSON.stringify(
+          {
+            plannedTracks: sessionState.plannedTracks,
+            missingTracks: missing,
+            enforcementCount: sessionState.enforcementHistory.length,
+            totalToolCalls: sessionState.totalToolCalls,
+          },
+          null,
+          2,
+        ),
       };
     },
   });

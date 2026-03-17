@@ -108,10 +108,66 @@ export type ClassifiedTrack = {
   summaryLine: string;
 };
 
+export function classifyTextTrack(track: TrackInput): ClassifiedTrack {
+  const label = track.label?.trim() || track.trackId;
+  const text = (track.resultText ?? "").trim();
+  const dirtyReasons = summarizeDirtyReasons(track.resultText);
+
+  const lines = text.split(/\r?\n/);
+  const cleanLines = lines.filter((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !looksLikeNoiseLine(trimmed);
+  });
+
+  const cleanText = cleanLines.join("\n").trim();
+
+  if (cleanText.length === 0) {
+    return {
+      trackId: track.trackId,
+      label,
+      status: "failed",
+      items: [],
+      dirtyReasons: dirtyReasons.length > 0 ? dirtyReasons : ["无有效内容"],
+      summaryLine: `${label}: failed，过滤后无有效文本内容。`,
+    };
+  }
+
+  const items: CandidateItem[] = cleanLines.slice(0, 20).map((line) => ({
+    title: line.trim().slice(0, 140),
+    url: "",
+    raw: line.trim(),
+    comments: null,
+  }));
+
+  if (dirtyReasons.length > 0) {
+    return {
+      trackId: track.trackId,
+      label,
+      status: "partial",
+      items,
+      dirtyReasons,
+      summaryLine: `${label}: partial，保留 ${items.length} 行有效文本，过滤脏内容（${dirtyReasons.join(", ")}）`,
+    };
+  }
+
+  return {
+    trackId: track.trackId,
+    label,
+    status: "ok",
+    items,
+    dirtyReasons: [],
+    summaryLine: `${label}: ok，验收通过 ${items.length} 行有效文本。`,
+  };
+}
+
 export function classifyTrack(
   track: TrackInput,
   maxItemsPerTrack: number,
 ): ClassifiedTrack {
+  // Route to text-based validation for non-URL tracks
+  if (track.contentType === "text-analysis" || track.contentType === "structured-data") {
+    return classifyTextTrack(track);
+  }
   const label = track.label?.trim() || track.trackId;
   const dirtyReasons = summarizeDirtyReasons(track.resultText);
   const trackKind = inferTrackKind(track.trackId);

@@ -1,5 +1,5 @@
 import { inferRecentWindowDays } from "./track-planner.ts";
-import type { PlannedTrack } from "./types.ts";
+import type { PlannedTrack, TrackContentType } from "./types.ts";
 
 export interface TrackTemplate {
   id: string;
@@ -9,6 +9,7 @@ export interface TrackTemplate {
   defaultGoal: string;
   outputContract: string[];
   failureContract: string[];
+  contentType?: TrackContentType;
 }
 
 export const TRACK_TEMPLATES: TrackTemplate[] = [
@@ -21,6 +22,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Find the most relevant and active issues",
     outputContract: ["Issue title + URL + activity metrics", "Filter by time window if specified"],
     failureContract: ["Explain if no results or access denied", "Do not return HTML or tool logs"],
+    contentType: "github-url",
   },
   {
     id: "github-discussions",
@@ -30,6 +32,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Find the most relevant discussions",
     outputContract: ["Discussion title + URL + activity", "Note if discussions are disabled"],
     failureContract: ["Distinguish disabled vs no results", "Do not return noise"],
+    contentType: "github-url",
   },
   {
     id: "security-audit",
@@ -39,6 +42,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Identify security vulnerabilities and risks",
     outputContract: ["Severity rating per finding", "CVE references where applicable", "Remediation suggestions"],
     failureContract: ["Report if scope is too broad", "Do not skip findings for brevity"],
+    contentType: "text-analysis",
   },
   {
     id: "performance-review",
@@ -48,6 +52,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Identify performance bottlenecks and optimization opportunities",
     outputContract: ["Metrics and benchmarks", "Prioritized optimization suggestions"],
     failureContract: ["Report if unable to measure", "Do not estimate without evidence"],
+    contentType: "text-analysis",
   },
   {
     id: "competitive-analysis",
@@ -57,6 +62,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Compare alternatives on features, quality, and fit",
     outputContract: ["Comparison matrix", "Recommendation with rationale"],
     failureContract: ["Report data gaps", "Do not fabricate feature comparisons"],
+    contentType: "text-analysis",
   },
   {
     id: "code-review",
@@ -66,6 +72,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Identify code quality issues, bugs, and improvement opportunities",
     outputContract: ["Issue severity (critical/major/minor)", "Specific file and line references", "Fix suggestions"],
     failureContract: ["Report if codebase is too large for thorough review", "Do not give generic advice"],
+    contentType: "text-analysis",
   },
   {
     id: "dependency-audit",
@@ -75,6 +82,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Assess dependency health and risks",
     outputContract: ["Security vulnerability count", "License compatibility", "Maintenance status"],
     failureContract: ["Report if package registry is unreachable", "Do not skip transitive dependencies"],
+    contentType: "text-analysis",
   },
   {
     id: "documentation-review",
@@ -84,6 +92,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Identify documentation gaps and quality issues",
     outputContract: ["Coverage assessment", "Missing sections", "Accuracy issues"],
     failureContract: ["Report if no docs found", "Do not invent coverage metrics"],
+    contentType: "text-analysis",
   },
   {
     id: "market-research",
@@ -93,6 +102,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Identify market opportunities and user needs",
     outputContract: ["Trend analysis", "User need patterns", "Opportunity ranking"],
     failureContract: ["Distinguish verified data from estimates", "Do not fabricate statistics"],
+    contentType: "text-analysis",
   },
   {
     id: "ops-health-check",
@@ -102,6 +112,7 @@ export const TRACK_TEMPLATES: TrackTemplate[] = [
     defaultGoal: "Verify system health and identify issues",
     outputContract: ["Service status", "Resource utilization", "Alert summary"],
     failureContract: ["Report if unable to access monitoring", "Do not assume healthy without evidence"],
+    contentType: "structured-data",
   },
 ];
 
@@ -141,6 +152,7 @@ export function buildTrackFromTemplate(
     goal,
     outputContract: template.outputContract,
     failureContract: template.failureContract,
+    contentType: template.contentType,
     subagentPrompt: [
       `You are responsible for: ${template.name}.`,
       `Goal: ${goal}`,

@@ -12,29 +12,28 @@ describe("inferExecutionComplexity", () => {
     assert.equal(inferExecutionComplexity("真实执行一个多 agent 调研"), "delegation");
   });
 
-  it('returns tracked for Chinese "按步骤部署"', () => {
-    assert.equal(inferExecutionComplexity("按步骤部署"), "tracked");
+  it('returns light for short Chinese "按步骤部署" (< 15 chars)', () => {
+    assert.equal(inferExecutionComplexity("按步骤部署"), "light");
   });
 
   it('returns light for Chinese "查一下"', () => {
     assert.equal(inferExecutionComplexity("查一下"), "light");
   });
 
-  it('returns tracked for English "deploy step by step with multiple agents" (no exact delegation marker)', () => {
-    // "multiple agents" does not match delegation markers ("multi agent", "worker", etc.)
+  it('returns tracked for English "deploy step by step with multiple agents" (2 markers: deploy + step by step)', () => {
     assert.equal(inferExecutionComplexity("deploy step by step with multiple agents"), "tracked");
   });
 
-  it('returns tracked for English "audit the security"', () => {
-    assert.equal(inferExecutionComplexity("audit the security"), "tracked");
+  it('returns light for English "audit the security" (1 marker, < 50 chars)', () => {
+    assert.equal(inferExecutionComplexity("audit the security"), "light");
   });
 
   it('returns light for English "hello"', () => {
     assert.equal(inferExecutionComplexity("hello"), "light");
   });
 
-  it('returns delegation for mixed "multi agent 调研"', () => {
-    assert.equal(inferExecutionComplexity("multi agent 调研"), "delegation");
+  it('returns delegation for mixed "multi agent 调研任务" (>= 15 chars)', () => {
+    assert.equal(inferExecutionComplexity("multi agent 调研任务"), "delegation");
   });
 
   it("returns light for empty string", () => {
@@ -45,31 +44,31 @@ describe("inferExecutionComplexity", () => {
     assert.equal(inferExecutionComplexity(undefined), "light");
   });
 
-  it("returns tracked for Chinese 分步骤", () => {
-    assert.equal(inferExecutionComplexity("请分步骤处理"), "tracked");
+  it("returns light for short Chinese 分步骤 (< 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("请分步骤处理"), "light");
   });
 
-  it("returns tracked for English step by step", () => {
-    assert.equal(inferExecutionComplexity("do it step by step"), "tracked");
+  it("returns light for short English step by step (< 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("do it step by step"), "light");
   });
 
-  it("returns delegation for sub-agent keyword", () => {
-    assert.equal(inferExecutionComplexity("use a subagent"), "delegation");
+  it("returns delegation for sub-agent keyword (>= 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("use a subagent now"), "delegation");
   });
 
   it("returns delegation for delegate keyword", () => {
     assert.equal(inferExecutionComplexity("delegate this task"), "delegation");
   });
 
-  it("returns tracked for download keyword", () => {
-    assert.equal(inferExecutionComplexity("download the package"), "tracked");
+  it("returns light for download keyword alone (1 marker, < 50 chars)", () => {
+    assert.equal(inferExecutionComplexity("download the package"), "light");
   });
 
-  it("returns tracked for install keyword", () => {
-    assert.equal(inferExecutionComplexity("install the dependencies"), "tracked");
+  it("returns light for install keyword alone (1 marker, < 50 chars)", () => {
+    assert.equal(inferExecutionComplexity("install the dependencies"), "light");
   });
 
-  it("returns tracked for configure keyword", () => {
+  it('returns tracked for "configure the server" (2 markers: configure + config substring)', () => {
     assert.equal(inferExecutionComplexity("configure the server"), "tracked");
   });
 
@@ -77,24 +76,70 @@ describe("inferExecutionComplexity", () => {
     assert.equal(inferExecutionComplexity("multi agent deploy step by step"), "delegation");
   });
 
-  it("returns tracked for 检查 keyword", () => {
-    assert.equal(inferExecutionComplexity("检查一下配置"), "tracked");
+  it("returns light for short 检查 keyword (< 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("检查一下配置"), "light");
   });
 
-  it("returns tracked for 汇报进度 keyword", () => {
-    assert.equal(inferExecutionComplexity("请汇报进度"), "tracked");
+  it("returns light for short 汇报进度 keyword (< 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("请汇报进度"), "light");
   });
 
-  it("returns delegation for 子 agent keyword", () => {
-    assert.equal(inferExecutionComplexity("派出子 agent"), "delegation");
+  it("returns delegation for 子 agent keyword (>= 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("请派出子 agent 执行任务"), "delegation");
   });
 
   it("returns delegation for dispatch keyword", () => {
     assert.equal(inferExecutionComplexity("dispatch workers now"), "delegation");
   });
 
-  it("returns delegation for worker keyword", () => {
-    assert.equal(inferExecutionComplexity("spawn a worker"), "delegation");
+  it("returns delegation for worker keyword (>= 15 chars)", () => {
+    assert.equal(inferExecutionComplexity("spawn a worker process"), "delegation");
+  });
+
+  // Fix A: Short-circuit tests
+  it('returns light for "你好" (trivial greeting)', () => {
+    assert.equal(inferExecutionComplexity("你好"), "light");
+  });
+
+  it('returns light for "check" (< 15 chars)', () => {
+    assert.equal(inferExecutionComplexity("check"), "light");
+  });
+
+  it('returns light for "hello, how are you" (trivial greeting pattern)', () => {
+    assert.equal(inferExecutionComplexity("hello, how are you"), "light");
+  });
+
+  it('returns light for "帮我检查一下" (< 15 chars, no compound evidence)', () => {
+    assert.equal(inferExecutionComplexity("帮我检查一下"), "light");
+  });
+
+  // Fix B: Compound evidence tests
+  it('returns tracked for two keywords "请按步骤执行完整的部署和安装流程" (2+ markers)', () => {
+    assert.equal(inferExecutionComplexity("请按步骤执行完整的部署和安装流程"), "tracked");
+  });
+
+  it("returns tracked for long request with single keyword (> 50 chars)", () => {
+    assert.equal(
+      inferExecutionComplexity("please configure the entire deployment pipeline for our production environment"),
+      "tracked",
+    );
+  });
+
+  it("returns tracked for two English markers: deploy + download", () => {
+    assert.equal(inferExecutionComplexity("deploy and download all dependencies for the project"), "tracked");
+  });
+
+  it("returns light for single marker request exactly at 50 chars boundary", () => {
+    // 50 chars exactly with "check" marker — should NOT be tracked (must be > 50)
+    const text = "please check this item for me right now ok thanks!"; // 50 chars
+    assert.equal(text.length, 50);
+    assert.equal(inferExecutionComplexity(text), "light");
+  });
+
+  it("returns tracked for single marker request just over 50 chars", () => {
+    const text = "please check this item for me right now ok thanks!!"; // 51 chars
+    assert.equal(text.length, 51);
+    assert.equal(inferExecutionComplexity(text), "tracked");
   });
 });
 
@@ -146,6 +191,14 @@ describe("shouldRequireTaskBus", () => {
   it("returns true for strict-orchestrated + light", () => {
     assert.equal(shouldRequireTaskBus("strict-orchestrated", "light"), true);
   });
+
+  it("returns true for strict-orchestrated + tracked", () => {
+    assert.equal(shouldRequireTaskBus("strict-orchestrated", "tracked"), true);
+  });
+
+  it("returns true for strict-orchestrated + delegation", () => {
+    assert.equal(shouldRequireTaskBus("strict-orchestrated", "delegation"), true);
+  });
 });
 
 describe("shouldRequireDelegation", () => {
@@ -177,8 +230,12 @@ describe("shouldRequireDelegation", () => {
     assert.equal(shouldRequireDelegation("strict-orchestrated", "tracked"), true);
   });
 
-  it("returns false for strict-orchestrated + light", () => {
-    assert.equal(shouldRequireDelegation("strict-orchestrated", "light"), false);
+  it("returns true for strict-orchestrated + light (always require delegation)", () => {
+    assert.equal(shouldRequireDelegation("strict-orchestrated", "light"), true);
+  });
+
+  it("returns true for strict-orchestrated + delegation", () => {
+    assert.equal(shouldRequireDelegation("strict-orchestrated", "delegation"), true);
   });
 
   it("returns true for guided + delegation", () => {
@@ -219,7 +276,7 @@ describe("buildExecutionPolicyReport", () => {
     const { details } = buildExecutionPolicyReport({
       mode: "tracked",
       delegationStartGate: "off",
-      request: "step by step deploy",
+      request: "step by step deploy and install everything",
       state: {
         hasTaskBus: false,
         hasPlan: true,
@@ -234,7 +291,7 @@ describe("buildExecutionPolicyReport", () => {
     const { details } = buildExecutionPolicyReport({
       mode: "guided",
       delegationStartGate: "off",
-      request: "deploy step by step",
+      request: "deploy step by step and then install all the dependencies",
       state: {
         hasTaskBus: true,
         hasPlan: false,
@@ -263,7 +320,7 @@ describe("buildExecutionPolicyReport", () => {
     const { details, report } = buildExecutionPolicyReport({
       mode: "free",
       delegationStartGate: "advisory",
-      request: "dispatch workers",
+      request: "dispatch workers now",
       state: {
         hasTaskBus: true,
         hasPlan: true,
@@ -299,7 +356,7 @@ describe("buildExecutionPolicyReport", () => {
     const { details } = buildExecutionPolicyReport({
       mode: "tracked",
       delegationStartGate: "off",
-      request: "step by step deploy",
+      request: "step by step deploy and install",
       state: {
         ...baseState,
         currentStep: 3,
@@ -314,7 +371,7 @@ describe("buildExecutionPolicyReport", () => {
     const { details } = buildExecutionPolicyReport({
       mode: "tracked",
       delegationStartGate: "off",
-      request: "step by step deploy",
+      request: "step by step deploy and install",
       state: {
         ...baseState,
         hasCompletedStep: true,
@@ -350,9 +407,31 @@ describe("buildExecutionPolicyReport", () => {
     const { details } = buildExecutionPolicyReport({
       mode: "tracked",
       delegationStartGate: "off",
-      request: "step by step deploy",
+      request: "step by step deploy and install all dependencies",
       state: { hasTaskBus: false, hasPlan: false },
     });
     assert.ok(details.resumePrompt.includes("tracked"));
+  });
+
+  it("strict-orchestrated always requires task bus even for light task", () => {
+    const { details } = buildExecutionPolicyReport({
+      mode: "strict-orchestrated",
+      delegationStartGate: "off",
+      request: "hello",
+      state: { hasTaskBus: false, hasPlan: true, hasWorkerStart: true },
+    });
+    assert.equal(details.requireTaskBus, true);
+    assert.ok(details.violations.some((v: string) => v.includes("task bus")));
+  });
+
+  it("strict-orchestrated always requires delegation even for light task", () => {
+    const { details } = buildExecutionPolicyReport({
+      mode: "strict-orchestrated",
+      delegationStartGate: "off",
+      request: "hello",
+      state: { hasTaskBus: true, hasPlan: true, hasWorkerStart: false },
+    });
+    assert.equal(details.requireDelegation, true);
+    assert.ok(details.violations.some((v: string) => v.includes("worker/subagent")));
   });
 });

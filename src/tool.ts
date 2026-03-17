@@ -6,6 +6,10 @@ import { planCustomTracks } from "./track-templates.ts";
 import { classifyTrack, dedupeItems } from "./candidate-extractor.ts";
 import { buildHumanReport } from "./report-builder.ts";
 import { suggestTracksFromTopics, feedbackToOfms } from "./ofms-bridge.ts";
+import type { OrchestratorSessionState } from "./session-state.ts";
+import { recordPlan, recordEnforcement, recordTrackResult, getMissingTracks, getUnplannedTracks, recordToolCall } from "./session-state.ts";
+import type { AuditLog } from "./audit-log.ts";
+import { logEvent } from "./audit-log.ts";
 
 export { MultiAgentOrchestratorSchema } from "./schema.ts";
 import { MultiAgentOrchestratorSchema } from "./schema.ts";
@@ -15,6 +19,8 @@ export function createMultiAgentOrchestratorTool(params?: {
   executionPolicy?: ExecutionPolicyMode;
   delegationStartGate?: DelegationStartGateMode;
   logger?: (message: string) => void;
+  sessionState?: OrchestratorSessionState;
+  auditLog?: AuditLog;
 }) {
   const maxItemsPerTrack = Math.max(1, Math.min(20, params?.maxItemsPerTrack ?? 8));
   const executionPolicy: ExecutionPolicyMode = params?.executionPolicy ?? "guided";
@@ -67,6 +73,18 @@ export function createMultiAgentOrchestratorTool(params?: {
         let report = buildPlanningReport(request, tracks);
         log?.(`[tool] action=plan_tracks tracks=${tracks.length}`);
 
+        if (params?.sessionState) {
+          recordPlan(params.sessionState, tracks.map((t) => ({
+            trackId: t.trackId,
+            label: t.label,
+            contentType: (t as Record<string, unknown>).contentType as string | undefined,
+          })));
+        }
+        log?.(`[audit] plan_created tracks=${tracks.length}`);
+        if (params?.auditLog) {
+          logEvent(params.auditLog, "plan_created", { trackCount: tracks.length, trackIds: tracks.map((t) => t.trackId) });
+        }
+
         // Add OFMS topic suggestions to the report if available
         const sharedRoot = typeof rawParams.ofmsSharedRoot === "string" ? rawParams.ofmsSharedRoot : undefined;
         if (sharedRoot) {
@@ -112,6 +130,13 @@ export function createMultiAgentOrchestratorTool(params?: {
         log?.(
           `[tool] action=enforce_execution_policy policy=${executionPolicy} violations=${details.violations.length}`,
         );
+        if (params?.sessionState) {
+          recordEnforcement(params.sessionState, details.violations, executionPolicy);
+          recordToolCall(params.sessionState);
+        }
+        if (params?.auditLog) {
+          logEvent(params.auditLog, "policy_check", { mode: executionPolicy, violations: details.violations, verified: !!state });
+        }
         return {
           content: [{ type: "text", text: report }],
           details,
@@ -140,7 +165,7 @@ export function createMultiAgentOrchestratorTool(params?: {
       const tracks = rawTracks as TrackInput[];
       const classified = tracks.map((track) => classifyTrack(track, maxItemsPerTrack));
       const { deduped, duplicates } = dedupeItems(classified);
-      const report = buildHumanReport({
+      let report = buildHumanReport({
         request: typeof rawParams.request === "string" ? rawParams.request : undefined,
         tracks: classified,
         deduped,
@@ -149,6 +174,25 @@ export function createMultiAgentOrchestratorTool(params?: {
       log?.(
         `[tool] action=validate_and_merge tracks=${classified.length} kept=${deduped.length} duplicates=${duplicates}`,
       );
+
+      if (params?.sessionState) {
+        for (const track of classified) {
+          recordTrackResult(params.sessionState, track.trackId, track.status);
+        }
+
+        const missing = getMissingTracks(params.sessionState);
+        const unplanned = getUnplannedTracks(params.sessionState, classified.map((t) => t.trackId));
+
+        if (missing.length > 0) {
+          report += `\n\n⚠️ 未提交的 track: ${missing.join(", ")}`;
+        }
+        if (unplanned.length > 0) {
+          report += `\n\n⚠️ 计划外的 track: ${unplanned.join(", ")}`;
+        }
+      }
+      if (params?.auditLog) {
+        logEvent(params.auditLog, "merge_completed", { trackCount: classified.length, kept: deduped.length, duplicates });
+      }
 
       if (typeof rawParams.ofmsSharedRoot === "string" && deduped.length > 0) {
         const feedbackCount = feedbackToOfms({

@@ -1,7 +1,19 @@
 import type { DelegationStartGateMode, ExecutionGuardRequest, ExecutionPolicyMode } from "./types.ts";
 
 export function inferExecutionComplexity(request?: string): "light" | "tracked" | "delegation" {
-  const text = (request ?? "").toLowerCase();
+  const text = (request ?? "").trim();
+
+  // Short-circuit: trivial messages are always light
+  if (text.length < 15) return "light";
+
+  // Short-circuit: greetings and simple responses
+  const trivialPatterns = [
+    /^(你好|hello|hi|hey|ok|好的|收到|谢谢|thanks|yes|no|是|不是|对|嗯)/i,
+    /^(帮我看|看一下|查一下)$/,
+  ];
+  if (trivialPatterns.some((p) => p.test(text))) return "light";
+
+  const lower = text.toLowerCase();
   const longTaskMarkers = [
     // Chinese
     "分步骤",
@@ -42,12 +54,16 @@ export function inferExecutionComplexity(request?: string): "light" | "tracked" 
     "dispatch",
     "worker",
   ];
-  const matchedLong = longTaskMarkers.some((marker) => text.includes(marker));
-  const matchedDelegation = delegationMarkers.some((marker) => text.includes(marker));
-  if (matchedDelegation) {
+  const matchedLong = longTaskMarkers.filter((marker) => lower.includes(marker));
+  const matchedDelegation = delegationMarkers.filter((marker) => lower.includes(marker));
+
+  if (matchedDelegation.length > 0) {
     return "delegation";
   }
-  if (matchedLong) {
+  if (matchedLong.length >= 2) {
+    return "tracked";
+  }
+  if (matchedLong.length === 1 && text.length > 50) {
     return "tracked";
   }
   return "light";
@@ -57,6 +73,9 @@ export function shouldRequireTaskBus(
   mode: ExecutionPolicyMode,
   complexity: ReturnType<typeof inferExecutionComplexity>,
 ): boolean {
+  if (mode === "strict-orchestrated") {
+    return true;
+  }
   if (mode === "free") {
     return complexity !== "light";
   }
@@ -70,7 +89,10 @@ export function shouldRequireDelegation(
   mode: ExecutionPolicyMode,
   complexity: ReturnType<typeof inferExecutionComplexity>,
 ): boolean {
-  if (mode === "delegation-first" || mode === "strict-orchestrated") {
+  if (mode === "strict-orchestrated") {
+    return true;
+  }
+  if (mode === "delegation-first") {
     return complexity !== "light";
   }
   return complexity === "delegation";
@@ -123,6 +145,18 @@ export function buildExecutionPolicyReport(params: {
   if (currentStep >= totalSteps && totalSteps > 0 && !params.state.hasFinalMerge) {
     violations.push("所有步骤已完成，但还没有做最终验收与汇总");
     requiredNow.push("执行最终验收、去重、汇总");
+  }
+
+  // strict-orchestrated additional enforcement
+  if (params.mode === "strict-orchestrated") {
+    const verifiedState = (params as { verifiedState?: { totalSpawns: number } }).verifiedState;
+    if (verifiedState && verifiedState.totalSpawns > 0) {
+      const policyCheckCount = (params as { policyCheckCount?: number }).policyCheckCount ?? 0;
+      if (policyCheckCount < verifiedState.totalSpawns) {
+        violations.push("strict 模式：每次派工后需重新调用 enforce_execution_policy");
+        requiredNow.push("再次调用 enforce_execution_policy 确认当前状态");
+      }
+    }
   }
 
   if (violations.length === 0) {

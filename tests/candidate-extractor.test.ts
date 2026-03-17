@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   extractCandidateItems,
   classifyTrack,
+  classifyTextTrack,
   dedupeItems,
   extractCommentCount,
 } from "../src/candidate-extractor.ts";
@@ -251,5 +252,129 @@ describe("dedupeItems", () => {
     const { deduped } = dedupeItems(tracks);
     assert.equal(deduped[0].trackId, "issues-track");
     assert.equal(deduped[0].label, "Issues");
+  });
+});
+
+describe("classifyTextTrack", () => {
+  it("returns ok for clean text content", () => {
+    const track = {
+      trackId: "security-audit-track",
+      label: "Security Audit",
+      resultText: "No critical vulnerabilities found.\nDependencies are up to date.\nAll inputs validated.",
+    };
+    const result = classifyTextTrack(track);
+    assert.equal(result.status, "ok");
+    assert.ok(result.items.length > 0);
+    assert.deepEqual(result.dirtyReasons, []);
+    assert.ok(result.summaryLine.includes("ok"));
+  });
+
+  it("returns partial for text with dirty markers mixed in", () => {
+    const track = {
+      trackId: "code-review-track",
+      label: "Code Review",
+      resultText: [
+        "```json",
+        '{"status": "error"}',
+        "Critical: missing error handling in auth module.",
+        "Minor: variable naming inconsistency.",
+      ].join("\n"),
+    };
+    const result = classifyTextTrack(track);
+    assert.equal(result.status, "partial");
+    assert.ok(result.dirtyReasons.length > 0);
+    assert.ok(result.summaryLine.includes("partial"));
+  });
+
+  it("returns failed for all-noise content", () => {
+    const track = {
+      trackId: "perf-review-track",
+      label: "Performance Review",
+      resultText: "Page not found\nEXTERNAL_UNTRUSTED_CONTENT",
+    };
+    const result = classifyTextTrack(track);
+    assert.equal(result.status, "failed");
+    assert.equal(result.items.length, 0);
+  });
+
+  it("returns failed with 无有效内容 reason when empty after filter", () => {
+    const track = {
+      trackId: "empty-track",
+      label: "Empty",
+      resultText: "",
+    };
+    const result = classifyTextTrack(track);
+    assert.equal(result.status, "failed");
+    assert.ok(result.dirtyReasons.includes("无有效内容"));
+  });
+
+  it("caps items at 20 lines", () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `Finding ${i + 1}: some issue here`);
+    const track = {
+      trackId: "audit-track",
+      label: "Audit",
+      resultText: lines.join("\n"),
+    };
+    const result = classifyTextTrack(track);
+    assert.ok(result.items.length <= 20);
+  });
+
+  it("uses trackId as label when label is absent", () => {
+    const track = {
+      trackId: "ops-health-check-track",
+      resultText: "All services healthy.",
+    };
+    const result = classifyTextTrack(track);
+    assert.equal(result.label, "ops-health-check-track");
+  });
+});
+
+describe("classifyTrack contentType routing", () => {
+  it("routes to text validation when contentType is text-analysis", () => {
+    const track = {
+      trackId: "security-audit-track",
+      label: "Security Audit",
+      resultText: "No vulnerabilities found in the codebase.",
+      contentType: "text-analysis" as const,
+    };
+    const result = classifyTrack(track, 10);
+    assert.equal(result.status, "ok");
+    // Text track items have empty url
+    assert.ok(result.items.every((item) => item.url === ""));
+  });
+
+  it("routes to text validation when contentType is structured-data", () => {
+    const track = {
+      trackId: "ops-health-check-track",
+      label: "Ops Health Check",
+      resultText: "CPU: 42%\nMemory: 65%\nDisk: 30%",
+      contentType: "structured-data" as const,
+    };
+    const result = classifyTrack(track, 10);
+    assert.equal(result.status, "ok");
+    assert.ok(result.items.length > 0);
+  });
+
+  it("uses URL validation when contentType is github-url", () => {
+    const track = {
+      trackId: "github-issues-track",
+      label: "GitHub Issues",
+      resultText: "- Issue https://github.com/foo/bar/issues/1 评论数: 5",
+      contentType: "github-url" as const,
+    };
+    const result = classifyTrack(track, 10);
+    assert.equal(result.status, "ok");
+    assert.equal(result.items[0].url, "https://github.com/foo/bar/issues/1");
+  });
+
+  it("uses URL validation when contentType is unspecified (backward compatible)", () => {
+    const track = {
+      trackId: "issues-track",
+      label: "Issues",
+      resultText: "- Issue https://github.com/foo/bar/issues/2 评论数: 3",
+    };
+    const result = classifyTrack(track, 10);
+    assert.equal(result.status, "ok");
+    assert.equal(result.items[0].url, "https://github.com/foo/bar/issues/2");
   });
 });
