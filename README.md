@@ -1,6 +1,8 @@
-# Multi-Agent Orchestrator (MAO)
+# OpenClaw Multi-Agent Orchestrator (MAO)
 
-Deterministic multi-agent task orchestration for OpenClaw. MAO coordinates parallel research tracks, enforces configurable execution-policy guardrails, and produces structured reports from raw child-agent outputs.
+Deterministic multi-agent task orchestration for [OpenClaw](https://github.com/openclaw). MAO coordinates parallel research tracks, enforces configurable execution-policy guardrails, integrates 144 specialized agent personalities, and produces structured reports from raw child-agent outputs.
+
+> **Naming note:** The product name is **OpenClaw Multi-Agent Orchestrator**. The internal plugin ID and tool name remain `multi-agent-orchestrator` for backward compatibility with existing OpenClaw configurations and agent tool calls. Slash commands use the `mao-` prefix (e.g., `/mao-agents`, `/mao-templates`).
 
 ---
 

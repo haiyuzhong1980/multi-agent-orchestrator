@@ -1,8 +1,8 @@
 {
   "id": "multi-agent-orchestrator",
   "author": "haiyuzhong1980",
-  "name": "Multi-Agent Orchestrator",
-  "description": "Deterministic validation and merge helper for multi-agent research tasks.",
+  "name": "OpenClaw Multi-Agent Orchestrator",
+  "description": "Deterministic multi-agent task orchestration with agent registry, OFMS integration, and track templates.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
