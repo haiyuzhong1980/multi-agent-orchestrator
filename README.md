@@ -105,6 +105,46 @@ Every `validate_and_merge` response emits five fixed sections:
 
 ---
 
+## Self-Evolution System (EV1–EV6)
+
+OMA learns from every interaction and continuously improves its ability to detect when multi-agent orchestration is needed.
+
+### Evolution Lifecycle
+
+| Phase | Duration | Behavior |
+|---|---|---|
+| **Observation** (Level 0) | Day 1-3 | Passive recording, no enforcement |
+| **Advisory** (Level 1) | Day 4-7 | Soft suggestions, no blocking |
+| **Guided** (Level 2) | Day 8+ | Identity injection + dispatch plans |
+| **Enforced** (Level 3) | Mature | Hard tool blocking until dispatch |
+
+### How It Works
+
+1. **Observation Engine** — Records every user message and its outcome (what tools were called, whether subagents were spawned, whether the user was satisfied or corrected the system)
+2. **Pattern Discovery** — Uses TF-IDF-like analysis to find words that predict delegation intent
+3. **Enforcement Ladder** — Gradually increases enforcement as accuracy improves, automatically downgrades on repeated errors
+4. **Daily Evolution** — Nightly cycle analyzes observations, discovers patterns, auto-applies high-confidence keywords, adjusts enforcement level
+5. **Onboarding** — First-run questionnaire adapts to user preferences (work type, aggressiveness level, custom phrases)
+6. **Export/Import** — Share learned patterns across team members
+
+### Evolution Commands
+
+| Command | Description |
+|---|---|
+| `/mao-observations` | View observation statistics |
+| `/mao-discover` | Run pattern discovery manually |
+| `/mao-level` | Check current enforcement level |
+| `/mao-evolve` | Trigger manual evolution cycle |
+| `/mao-evolution-history` | View past evolution reports |
+| `/mao-setup` | Re-run onboarding questionnaire |
+| `/mao-keyword <tier> <phrase>` | Add custom keyword |
+| `/mao-learned` | View learned intent patterns |
+| `/mao-export` | Export patterns for sharing |
+| `/mao-import <file>` | Import shared patterns |
+| `/mao-reset` | Reset to Level 0 |
+
+---
+
 ## Commands
 
 | Command | Description |
@@ -120,6 +160,19 @@ Every `validate_and_merge` response emits five fixed sections:
 | `/mao-report [projectId]` | Generate a completion report for a project |
 | `/mao-run` | (alias: `orchestrate` action) Plan and dispatch a new project |
 | `/maotest` | Run a deterministic self-test (plan + merge + policy) |
+| `/mao-audit` | View the audit log for the current session |
+| `/mao-state` | Show current evolution state |
+| `/mao-observations` | View observation statistics |
+| `/mao-discover` | Run pattern discovery manually |
+| `/mao-level` | Check current enforcement level |
+| `/mao-evolve` | Trigger manual evolution cycle |
+| `/mao-evolution-history` | View past evolution reports |
+| `/mao-setup` | Re-run onboarding questionnaire |
+| `/mao-keyword <tier> <phrase>` | Add custom keyword |
+| `/mao-learned` | View learned intent patterns |
+| `/mao-export` | Export patterns for sharing |
+| `/mao-import <file>` | Import shared patterns |
+| `/mao-reset` | Reset to Level 0 |
 
 CLI: `openclaw mao-selftest`
 
@@ -131,10 +184,18 @@ CLI: `openclaw mao-selftest`
 index.ts                  — plugin entry point; registers tool, commands, and CLI
 src/
   agent-registry.ts       — load and search the agency-agents library
+  audit-log.ts            — session-scoped audit log for tool and hook events (EV1)
   candidate-extractor.ts  — extract GitHub-linked items from raw text
+  enforcement-ladder.ts   — 4-level enforcement ladder with auto-upgrade/downgrade (EV3)
+  evolution-cycle.ts      — nightly evolution cycle: analyze, discover, apply (EV4)
   execution-policy.ts     — 5-mode policy engine
+  intent-registry.ts      — merged keyword registry (built-in + learned + user-defined) (EV2)
   noise-filter.ts         — dirty-marker and tool-log filtering
+  observation-engine.ts   — passive observation recorder: messages, tools, outcomes (EV1)
   ofms-bridge.ts          — OFMS shared-memory read/write
+  onboarding.ts           — first-run questionnaire for preferences and custom phrases (EV5)
+  pattern-discovery.ts    — TF-IDF-like analysis to discover delegation-intent keywords (EV2)
+  pattern-export.ts       — export/import learned patterns for team sharing (EV5)
   prompt-guidance.ts      — system-prompt guidance injected before_prompt_build
   report-builder.ts       — assemble the 5-section structured report
   report-generator.ts     — generate project completion reports (E6)
@@ -142,12 +203,14 @@ src/
   review-gate.ts          — auto-review, approve/reject, retry logic (E4)
   schema.ts               — JSON Schema for the tool
   session-resume.ts       — detect interrupted work on startup (E5)
+  session-state.ts        — persistent evolution state (level, stats, timestamps) (EV3)
   task-board.ts           — persistent task board data model (E1)
   tool.ts                 — tool execute() dispatcher
   track-planner.ts        — plan_tracks logic, window inference, subagent prompts
   track-templates.ts      — 10 built-in track templates
   types.ts                — shared TypeScript types
   url-utils.ts            — URL classification utilities
+  user-keywords.ts        — user-defined keyword management per tier (EV5)
 ```
 
 ### Architecture Diagram
@@ -217,7 +280,7 @@ Then add to your `openclaw.config.json`:
 
 ---
 
-## Evolution (M0 → M4 + E1–E6)
+## Evolution (M0 → M4 + E1–E6 + EV1–EV6)
 
 | Milestone | What was built |
 |---|---|
@@ -232,6 +295,12 @@ Then add to your `openclaw.config.json`:
 | E4 | Review gate + retry: auto-review on project completion, prepareRetries for failed tasks |
 | E5 | Session resume: detect interrupted work on startup, inject resume prompt |
 | E6 | Report generator: structured project completion reports, /mao-report command |
+| EV1 | Observation engine + audit log: passive recording of every message, tool call, and outcome |
+| EV2 | Pattern discovery: TF-IDF-like analysis extracts delegation-intent keywords from observations |
+| EV3 | Enforcement ladder: 4-level progressive enforcement (Observation → Advisory → Guided → Enforced) |
+| EV4 | Daily evolution cycle: nightly analyze → discover → apply → upgrade/downgrade loop |
+| EV5 | Onboarding, user keywords, pattern export/import: first-run questionnaire + team sharing |
+| EV6 | Final integration: full test suite (700 tests), documentation, v2.0.0 release |
 
 ---
 

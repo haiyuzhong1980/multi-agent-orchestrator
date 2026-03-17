@@ -1,8 +1,9 @@
 {
   "id": "multi-agent-orchestrator",
+  "version": "2.0.0",
   "author": "haiyuzhong1980",
   "name": "OpenClaw Multi-Agent Orchestrator",
-  "description": "Deterministic multi-agent task orchestration with agent registry, OFMS integration, and track templates.",
+  "description": "Deterministic multi-agent task orchestration with agent registry, OFMS integration, track templates, and self-evolving intent detection.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
