@@ -10,6 +10,9 @@ import type { OrchestratorSessionState } from "./session-state.ts";
 import { recordPlan, recordEnforcement, recordTrackResult, getMissingTracks, getUnplannedTracks, recordToolCall } from "./session-state.ts";
 import type { AuditLog } from "./audit-log.ts";
 import { logEvent } from "./audit-log.ts";
+import type { TaskBoard } from "./task-board.ts";
+import { loadBoard, saveBoard, createProject, addTask } from "./task-board.ts";
+import { buildDispatchGuidance } from "./prompt-guidance.ts";
 
 export { MultiAgentOrchestratorSchema } from "./schema.ts";
 import { MultiAgentOrchestratorSchema } from "./schema.ts";
@@ -21,6 +24,8 @@ export function createMultiAgentOrchestratorTool(params?: {
   logger?: (message: string) => void;
   sessionState?: OrchestratorSessionState;
   auditLog?: AuditLog;
+  sharedRoot?: string;
+  board?: TaskBoard;
 }) {
   const maxItemsPerTrack = Math.max(1, Math.min(20, params?.maxItemsPerTrack ?? 8));
   const executionPolicy: ExecutionPolicyMode = params?.executionPolicy ?? "guided";
@@ -140,6 +145,90 @@ export function createMultiAgentOrchestratorTool(params?: {
         return {
           content: [{ type: "text", text: report }],
           details,
+        };
+      }
+
+      if (action === "orchestrate") {
+        const request = typeof rawParams.request === "string" ? rawParams.request : "";
+        if (!request) {
+          throw new Error("request is required for orchestrate action");
+        }
+
+        // Resolve the task board — prefer injected board (testing), then file-based
+        const sharedRoot =
+          typeof rawParams.ofmsSharedRoot === "string"
+            ? rawParams.ofmsSharedRoot
+            : (params?.sharedRoot ?? "");
+        const board: TaskBoard = params?.board ?? (sharedRoot ? loadBoard(sharedRoot) : { projects: [], version: 1 });
+
+        // Plan tracks using existing logic
+        const agentType = typeof rawParams.agentType === "string" ? rawParams.agentType : undefined;
+        const agentCategory =
+          typeof rawParams.agentCategory === "string" ? rawParams.agentCategory : undefined;
+        const agentRegistryPath =
+          typeof rawParams.agentRegistryPath === "string" ? rawParams.agentRegistryPath : undefined;
+        const rawCustomTracks = Array.isArray(rawParams.customTracks) ? rawParams.customTracks : undefined;
+        const customTracks = rawCustomTracks?.map((t: Record<string, unknown>) => ({
+          trackId: String(t.trackId ?? ""),
+          label: String(t.label ?? ""),
+          goal: String(t.goal ?? ""),
+        }));
+        const templateIds = Array.isArray(rawParams.templateIds)
+          ? (rawParams.templateIds as unknown[]).map(String)
+          : undefined;
+
+        let tracks;
+        if (templateIds || (customTracks && !agentType && !agentCategory)) {
+          tracks = planCustomTracks({ templateIds, customTracks, request });
+          if (tracks.length === 0) {
+            throw new Error(
+              "No tracks could be planned from the given input. Try specifying templateIds or customTracks.",
+            );
+          }
+        } else {
+          const agentTracks = planTracksWithAgents({
+            request,
+            agentType,
+            agentCategory,
+            agentRegistryPath,
+            customTracks,
+          });
+          tracks = agentTracks ?? inferResearchTracks(request);
+        }
+
+        // Create project and tasks on the board
+        const project = createProject(board, { name: request.slice(0, 50), request });
+        for (const track of tracks) {
+          addTask(project, {
+            trackId: track.trackId,
+            label: track.label,
+            agentType: track.agentType as string | undefined,
+            contentType: track.contentType,
+            subagentPrompt: track.subagentPrompt,
+          });
+        }
+
+        // Persist if we have a shared root
+        if (sharedRoot) {
+          saveBoard(sharedRoot, board);
+        }
+
+        const guidance = buildDispatchGuidance(project);
+        log?.(`[tool] action=orchestrate projectId=${project.id} tasks=${project.tasks.length}`);
+        if (params?.auditLog) {
+          logEvent(params.auditLog, "plan_created", {
+            projectId: project.id,
+            trackCount: project.tasks.length,
+            trackIds: project.tasks.map((t) => t.trackId),
+          });
+        }
+
+        return {
+          content: [{ type: "text", text: guidance }],
+          details: {
+            projectId: project.id,
+            tasks: project.tasks.map((t) => ({ id: t.id, label: t.label, trackId: t.trackId })),
+          },
         };
       }
 

@@ -1,4 +1,5 @@
 import type { ExecutionPolicyMode } from "./types.ts";
+import type { Project } from "./task-board.ts";
 
 export function buildOrchestratorPromptGuidance(mode: ExecutionPolicyMode): string {
   return [
@@ -17,4 +18,29 @@ export function buildOrchestratorPromptGuidance(mode: ExecutionPolicyMode): stri
     "Only include validated items from the tool result in the final answer.",
     "Do not include HTML, 404 pages, tool logs, run metadata, or empty payload diagnostics.",
   ].join("\n");
+}
+
+export function buildDispatchGuidance(project: Project): string {
+  const pendingTasks = project.tasks.filter((t) => t.status === "pending");
+  if (pendingTasks.length === 0) return "";
+
+  const lines = [
+    `\n[OMA Dispatch Plan — ${project.name}]`,
+    `你是编排者。以下 ${pendingTasks.length} 个任务需要派出子 agent 执行：`,
+    "",
+  ];
+
+  for (const task of pendingTasks) {
+    lines.push(`📌 ${task.label} (${task.id})`);
+    if (task.agentType) lines.push(`   Agent: ${task.agentType}`);
+    lines.push(`   调用 sessions_spawn，task 参数：`);
+    lines.push(`   "${task.subagentPrompt?.slice(0, 200) ?? task.label}"`);
+    lines.push("");
+  }
+
+  lines.push(
+    "完成派工后，等待子 agent 返回（sessions_yield），然后调用 multi-agent-orchestrator action=validate_and_merge 验收。",
+  );
+
+  return lines.join("\n");
 }

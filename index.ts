@@ -3,11 +3,25 @@ import { existsSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createMultiAgentOrchestratorTool, MultiAgentOrchestratorSchema } from "./src/tool.ts";
-import { buildOrchestratorPromptGuidance } from "./src/prompt-guidance.ts";
+import { buildOrchestratorPromptGuidance, buildDispatchGuidance } from "./src/prompt-guidance.ts";
 import { loadAgentRegistry, searchAgents, getAgentsByCategory } from "./src/agent-registry.ts";
 import { listTemplates, findTemplate } from "./src/track-templates.ts";
 import { createAuditLog, logEvent, formatAuditReport } from "./src/audit-log.ts";
 import { createSessionState, getMissingTracks } from "./src/session-state.ts";
+import {
+  loadBoard,
+  saveBoard,
+  getActiveProjects,
+  getProject,
+  updateTaskStatus,
+  advanceProjectStatus,
+  formatBoardDisplay,
+} from "./src/task-board.ts";
+import type { TaskBoard } from "./src/task-board.ts";
+import { processSubagentResult, isProjectReadyForReview } from "./src/result-collector.ts";
+import { reviewProject, prepareRetries } from "./src/review-gate.ts";
+import { checkAndResume, buildResumePrompt } from "./src/session-resume.ts";
+import { generateProjectReport } from "./src/report-generator.ts";
 
 const OFMS_SHARED_ROOT =
   process.env.OFMS_SHARED_ROOT ?? join(process.env.HOME ?? "", ".openclaw/shared-memory");
@@ -33,6 +47,23 @@ export default function register(api: OpenClawPluginApi) {
   const auditLog = createAuditLog(200);
   const sessionState = createSessionState();
 
+  // Load task board from shared memory root
+  const board: TaskBoard = existsSync(OFMS_SHARED_ROOT) ? loadBoard(OFMS_SHARED_ROOT) : { projects: [], version: 1 };
+
+  // Session resume: track whether we have injected the resume prompt yet
+  let resumeInjected = false;
+
+  // Debounced board save
+  let boardSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleBoardSave(): void {
+    if (boardSaveTimer) clearTimeout(boardSaveTimer);
+    boardSaveTimer = setTimeout(() => {
+      if (existsSync(OFMS_SHARED_ROOT)) {
+        saveBoard(OFMS_SHARED_ROOT, board);
+      }
+    }, 500);
+  }
+
   const tool = createMultiAgentOrchestratorTool({
     executionPolicy,
     delegationStartGate,
@@ -41,6 +72,8 @@ export default function register(api: OpenClawPluginApi) {
     logger: (message) => api.logger.info(`[multi-agent-orchestrator] ${message}`),
     sessionState,
     auditLog,
+    sharedRoot: OFMS_SHARED_ROOT,
+    board,
   });
 
   // Wrap the raw JSON Schema in a TypeBox TSchema so the tool conforms to AnyAgentTool
@@ -59,6 +92,28 @@ export default function register(api: OpenClawPluginApi) {
         guidance +=
           `\n\nOFMS shared memory is available at ${OFMS_SHARED_ROOT}. Pass ofmsSharedRoot="${OFMS_SHARED_ROOT}" to multi-agent-orchestrator for topic-aware planning and result feedback.`;
       }
+
+      // E5: Inject resume context on first prompt build after startup
+      if (!resumeInjected) {
+        resumeInjected = true;
+        const resumeResult = checkAndResume(board);
+        const resumePrompt = buildResumePrompt(resumeResult);
+        if (resumePrompt) {
+          guidance += `\n\n${resumePrompt}`;
+          api.logger.info(`[OMA] Session resume: ${resumeResult.actions.length} pending actions detected`);
+        }
+      }
+
+      // Inject dispatch guidance for active projects with pending tasks
+      const activeProjects = getActiveProjects(board);
+      if (activeProjects.length > 0) {
+        const project = activeProjects[activeProjects.length - 1];
+        const dispatchGuidance = buildDispatchGuidance(project);
+        if (dispatchGuidance) {
+          guidance += dispatchGuidance;
+        }
+      }
+
       return { appendSystemContext: guidance };
     });
   }
@@ -72,19 +127,84 @@ export default function register(api: OpenClawPluginApi) {
   });
 
   api.on("subagent_spawned", async (event: Record<string, unknown>) => {
+    const sessionKey = event.childSessionKey as string | undefined;
+    const label = event.label as string | undefined;
+
     logEvent(auditLog, "subagent_spawned", {
-      sessionKey: event.childSessionKey,
+      sessionKey,
       agentId: event.agentId,
-      label: event.label,
+      label,
     });
+
+    // Find a pending task matching by label or trackId and mark dispatched
+    if (sessionKey) {
+      for (const project of board.projects) {
+        if (project.status === "done" || project.status === "failed") continue;
+        const task = project.tasks.find(
+          (t) => t.status === "pending" && (label ? t.label === label || t.trackId === label : false),
+        ) ?? project.tasks.find((t) => t.status === "pending");
+        if (task) {
+          updateTaskStatus(task, "dispatched", { sessionKey });
+          advanceProjectStatus(project);
+          scheduleBoardSave();
+          break;
+        }
+      }
+    }
+
     return undefined;
   });
 
   api.on("subagent_ended", async (event: Record<string, unknown>) => {
-    logEvent(auditLog, "subagent_ended", {
-      sessionKey: event.targetSessionKey,
-      outcome: event.outcome,
-    });
+    const sessionKey = event.targetSessionKey as string | undefined;
+    const outcome = event.outcome as string | undefined;
+
+    logEvent(auditLog, "subagent_ended", { sessionKey, outcome });
+
+    // E3: Update task board
+    if (sessionKey) {
+      const normalizedOutcome = (outcome === "failed" || outcome === "timeout" || outcome === "killed")
+        ? (outcome as "error" | "timeout" | "killed")
+        : "ok";
+
+      const result = processSubagentResult({
+        board,
+        sessionKey,
+        outcome: normalizedOutcome,
+      });
+
+      if (result.updated) {
+        api.logger.info(`[OMA] Task ${result.taskId} updated: ${outcome}`);
+
+        // E4: Auto-review when project is ready
+        const project = getProject(board, result.projectId!);
+        if (project && isProjectReadyForReview(project)) {
+          const { reviews, needsRetry, allApproved } = reviewProject(project);
+
+          api.logger.info(
+            `[OMA] Project ${project.id} reviewed: ${reviews.filter((r) => r.approved).length} approved, ${needsRetry.length} need retry`,
+          );
+
+          if (needsRetry.length > 0) {
+            prepareRetries(needsRetry);
+            api.logger.info(`[OMA] ${needsRetry.length} tasks prepared for retry`);
+          }
+
+          if (allApproved) {
+            project.status = "done";
+            api.logger.info(`[OMA] Project ${project.id} DONE — all tasks approved`);
+            // E6: Auto-log report when project completes
+            const report = generateProjectReport(project);
+            api.logger.info(`[OMA] Project report:\n${report}`);
+          }
+
+          advanceProjectStatus(project);
+        }
+
+        scheduleBoardSave();
+      }
+    }
+
     return undefined;
   });
 
@@ -209,6 +329,120 @@ export default function register(api: OpenClawPluginApi) {
           2,
         ),
       };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-board",
+    description: "Show all projects and tasks on the orchestration task board",
+    handler: () => {
+      const display = formatBoardDisplay(board);
+      return { text: display };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-project",
+    description: "Show details for a specific project by ID",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const projectId = (ctx.args ?? "").trim();
+      if (!projectId) return { text: "Usage: /mao-project <project-id>" };
+      const project = getProject(board, projectId);
+      if (!project) return { text: `No project found with ID "${projectId}"` };
+      const lines = [
+        `**${project.name}** (${project.status})`,
+        `ID: ${project.id}`,
+        `Request: ${project.request}`,
+        `Created: ${project.createdAt}`,
+        `Updated: ${project.updatedAt}`,
+        "",
+        `Tasks (${project.tasks.length}):`,
+        ...project.tasks.map((t) => {
+          const parts = [`  ${t.id}: ${t.label} — ${t.status}`];
+          if (t.agentType) parts.push(`(agent: ${t.agentType})`);
+          if (t.sessionKey) parts.push(`[session: ${t.sessionKey}]`);
+          if (t.retryCount > 0) parts.push(`[retry: ${t.retryCount}/${t.maxRetry}]`);
+          if (t.failureReason) parts.push(`\n    Failure: ${t.failureReason}`);
+          return parts.join(" ");
+        }),
+      ];
+      return { text: lines.join("\n") };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-review",
+    description: "Review results of the current active project",
+    handler: () => {
+      const active = getActiveProjects(board);
+      if (active.length === 0) return { text: "No active projects." };
+      const project = active[0];
+      const { reviews, needsRetry, allApproved } = reviewProject(project);
+      scheduleBoardSave();
+      return {
+        text: JSON.stringify(
+          {
+            projectId: project.id,
+            status: project.status,
+            reviews: reviews.map((r) => ({
+              taskId: r.taskId,
+              approved: r.approved,
+              status: r.status,
+              reason: r.reason,
+            })),
+            needsRetry: needsRetry.map((t) => t.id),
+            allApproved,
+          },
+          null,
+          2,
+        ),
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-resume",
+    description: "Check for interrupted work and show resume actions",
+    handler: () => {
+      const resumeResult = checkAndResume(board);
+      if (!resumeResult.resumed) {
+        return { text: "No interrupted work detected. All projects are complete or idle." };
+      }
+      const lines = [
+        `Checked ${resumeResult.projectsChecked} active project(s):`,
+        ...resumeResult.actions.map((a) => `- ${a}`),
+      ];
+      if (resumeResult.tasksNeedingRetry > 0) {
+        lines.push(`\nSuggestion: retry ${resumeResult.tasksNeedingRetry} failed task(s) via sessions_spawn.`);
+      }
+      if (resumeResult.tasksReadyForReview > 0) {
+        lines.push(`\nSuggestion: review ${resumeResult.tasksReadyForReview} completed task(s) via /mao-review.`);
+      }
+      if (resumeResult.tasksStillRunning > 0) {
+        lines.push(`\nSuggestion: ${resumeResult.tasksStillRunning} task(s) may still be running — wait for completion.`);
+      }
+      return { text: lines.join("\n") };
+    },
+  });
+
+  api.registerCommand({
+    name: "mao-report",
+    description: "Generate a completion report for a project. Usage: /mao-report [projectId]",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const projectId = (ctx.args ?? "").trim();
+      let project;
+      if (projectId) {
+        project = getProject(board, projectId);
+        if (!project) return { text: `No project found with ID "${projectId}"` };
+      } else {
+        // Default to the most recent project
+        if (board.projects.length === 0) return { text: "No projects on the board." };
+        project = board.projects[board.projects.length - 1];
+      }
+      const report = generateProjectReport(project);
+      return { text: report };
     },
   });
 

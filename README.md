@@ -8,17 +8,33 @@ Deterministic multi-agent task orchestration for [OpenClaw](https://github.com/o
 
 ## Architecture
 
-MAO exposes a single **3-action tool** (`multi-agent-orchestrator`):
+MAO exposes a single **4-action tool** (`multi-agent-orchestrator`) backed by a persistent task board:
 
 | Action | Purpose |
 |---|---|
 | `plan_tracks` | Decompose a request into typed research tracks with per-track subagent prompt templates |
 | `enforce_execution_policy` | Check whether the orchestrator must create a task-bus, produce a plan, spawn workers, or advance to the next step |
 | `validate_and_merge` | Accept raw child-agent outputs, filter noise, extract GitHub-linked items, deduplicate by URL, and emit a structured final report |
+| `orchestrate` | One-shot: plan tracks, create a project on the task board, persist it, and return dispatch guidance |
 
 ---
 
 ## Features
+
+### Task Board (E1–E6 Production Execution Engine)
+
+MAO maintains a persistent task board that tracks every project and subagent execution across sessions:
+
+| Module | Purpose |
+|---|---|
+| `task-board.ts` | Core data model: projects, tasks, statuses, and atomic JSON persistence |
+| `prompt-guidance.ts` | Auto-injects dispatch guidance into the system prompt for pending tasks |
+| `result-collector.ts` | Processes `subagent_ended` events and updates task statuses from raw output |
+| `review-gate.ts` | Auto-reviews completed tasks, marks approved/rejected, and prepares retries |
+| `session-resume.ts` | Detects interrupted work on startup and injects a resume prompt |
+| `report-generator.ts` | Generates structured completion reports with task-level detail |
+
+**Full lifecycle:** orchestrate → dispatch → collect → review → retry → report
 
 ### Execution Policy — 5 modes
 
@@ -97,6 +113,12 @@ Every `validate_and_merge` response emits five fixed sections:
 | `/mao-agent <name>` | Show full details for a specific agent |
 | `/mao-templates [category]` | List track templates, optionally filtered by category |
 | `/mao-template <id>` | Show full details for a specific template |
+| `/mao-board` | Show all projects and tasks on the task board |
+| `/mao-project <id>` | Show details for a specific project |
+| `/mao-review` | Review results of the current active project |
+| `/mao-resume` | Check for interrupted work from previous sessions |
+| `/mao-report [projectId]` | Generate a completion report for a project |
+| `/mao-run` | (alias: `orchestrate` action) Plan and dispatch a new project |
 | `/maotest` | Run a deterministic self-test (plan + merge + policy) |
 
 CLI: `openclaw mao-selftest`
@@ -115,12 +137,42 @@ src/
   ofms-bridge.ts          — OFMS shared-memory read/write
   prompt-guidance.ts      — system-prompt guidance injected before_prompt_build
   report-builder.ts       — assemble the 5-section structured report
-  schema.ts               — JSON Schema for the 3-action tool
+  report-generator.ts     — generate project completion reports (E6)
+  result-collector.ts     — collect and process subagent results (E3)
+  review-gate.ts          — auto-review, approve/reject, retry logic (E4)
+  schema.ts               — JSON Schema for the tool
+  session-resume.ts       — detect interrupted work on startup (E5)
+  task-board.ts           — persistent task board data model (E1)
   tool.ts                 — tool execute() dispatcher
   track-planner.ts        — plan_tracks logic, window inference, subagent prompts
   track-templates.ts      — 10 built-in track templates
   types.ts                — shared TypeScript types
   url-utils.ts            — URL classification utilities
+```
+
+### Architecture Diagram
+
+```
+User request
+    │
+    ▼
+orchestrate ──► task-board (create project + tasks)
+    │               │
+    │         before_prompt_build
+    │               ├── session-resume (E5): inject resume prompt on first call
+    │               └── prompt-guidance (E2): inject dispatch guidance
+    │
+subagent_spawned ──► mark task dispatched
+    │
+subagent_ended ──► result-collector (E3): update task from output
+    │                   │
+    │             review-gate (E4): auto-review when project ready
+    │                   ├── approved → advance project
+    │                   ├── rejected + retries left → prepareRetries
+    │                   └── all approved → report-generator (E6): log report
+    │
+/mao-resume ──► session-resume.checkAndResume → show pending actions
+/mao-report ──► report-generator.generateProjectReport → print report
 ```
 
 ---
@@ -165,7 +217,7 @@ Then add to your `openclaw.config.json`:
 
 ---
 
-## Evolution (M0 → M4)
+## Evolution (M0 → M4 + E1–E6)
 
 | Milestone | What was built |
 |---|---|
@@ -174,6 +226,12 @@ Then add to your `openclaw.config.json`:
 | M2 | Structured 5-section report, execution-policy engine (5 modes + 3 delegation gates) |
 | M3 | Agent Registry (144 agents from agency-agents library), /mao-agents + /mao-agent commands |
 | M4 | OFMS integration (topic-driven planning + result feedback), 10 track templates, /mao-templates + /mao-template commands |
+| E1 | Persistent task board: Project + Task data model, atomic JSON persistence, board display |
+| E2 | Auto-dispatch guidance: before_prompt_build injects pending task instructions |
+| E3 | Result collector: subagent_ended hook updates task statuses from raw output |
+| E4 | Review gate + retry: auto-review on project completion, prepareRetries for failed tasks |
+| E5 | Session resume: detect interrupted work on startup, inject resume prompt |
+| E6 | Report generator: structured project completion reports, /mao-report command |
 
 ---
 
