@@ -1,3 +1,4 @@
+// NOTE: Library module — wire into subagent completion handler when ready
 /**
  * Completion Status Protocol — 每个 agent 完成任务时必须报告的标准格式。
  *

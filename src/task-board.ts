@@ -62,6 +62,11 @@ export function loadBoard(sharedRoot: string): TaskBoard {
   try {
     const raw = readFileSync(filePath, "utf-8");
     const parsed = JSON.parse(raw) as TaskBoard;
+    // Migrate old board data that may lack sprint pipeline fields
+    for (const project of parsed.projects) {
+      if (!project.currentStage) project.currentStage = "plan";
+      if (!project.stageHistory) project.stageHistory = [];
+    }
     return parsed;
   } catch {
     return createEmptyBoard();

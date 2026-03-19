@@ -1,3 +1,4 @@
+// NOTE: Library module — wire into /ship command when ready
 export interface ReviewRecord {
   reviewType: 'code-review' | 'security-review' | 'test-coverage' | 'architecture-review' | 'codex-review';
   agentType: string;
@@ -137,10 +138,16 @@ export function checkStaleness(
 /**
  * Computes overall verdict based on review records.
  * - BLOCKED: any required review is FAILED
- * - INCOMPLETE: any required review is NOT_RUN or stale (NOT_RUN used here)
- * - CLEARED: all required reviews are CLEAR
+ * - INCOMPLETE: any required review is NOT_RUN, stale, or has CONCERNS
+ * - CLEARED: all required reviews are CLEAR and up-to-date
+ *
+ * @param currentCommitHash - When provided, required reviews whose lastCommitHash
+ *   differs from this value are treated as stale and yield INCOMPLETE.
  */
-export function computeVerdict(dashboard: ReviewDashboard): { verdict: 'CLEARED' | 'BLOCKED' | 'INCOMPLETE'; reason: string } {
+export function computeVerdict(
+  dashboard: ReviewDashboard,
+  currentCommitHash?: string,
+): { verdict: 'CLEARED' | 'BLOCKED' | 'INCOMPLETE'; reason: string } {
   const required = dashboard.records.filter((r) => r.required);
 
   const blocked = required.find((r) => r.status === 'FAILED');
@@ -157,6 +164,18 @@ export function computeVerdict(dashboard: ReviewDashboard): { verdict: 'CLEARED'
       verdict: 'INCOMPLETE',
       reason: `${formatReviewType(notRun.reviewType)} required but not run`,
     };
+  }
+
+  if (currentCommitHash) {
+    const stale = required.find(
+      (r) => r.lastCommitHash !== null && r.lastCommitHash !== currentCommitHash,
+    );
+    if (stale) {
+      return {
+        verdict: 'INCOMPLETE',
+        reason: `${formatReviewType(stale.reviewType)} is stale (reviewed at a different commit)`,
+      };
+    }
   }
 
   const hasConcerns = required.find((r) => r.status === 'CONCERNS');
@@ -285,7 +304,7 @@ export function formatDashboard(dashboard: ReviewDashboard, currentCommitHash?: 
     );
   });
 
-  const { verdict, reason } = computeVerdict(dashboard);
+  const { verdict, reason } = computeVerdict(dashboard, currentCommitHash);
   const verdictText = `VERDICT: ${verdict} — ${reason}`;
   const verdictPad = totalWidth - 2 - verdictText.length;
   const verdictLine =

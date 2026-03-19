@@ -1,3 +1,4 @@
+// NOTE: Library module — wire into executor agent loop when ready
 export interface WtfState {
   revertCount: number;
   largeFixCount: number;      // number of fixes that changed >3 files

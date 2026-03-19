@@ -79,10 +79,15 @@ export function createSubagentHooks(
         : outcome === "failed" || outcome === "error" ? "error"
         : "ok";
 
+      const resultText = (event.resultText as string | undefined)
+        ?? (event.output as string | undefined)
+        ?? "";
+
       const result = processSubagentResult({
         board: state.board,
         sessionKey,
         outcome: normalizedOutcome,
+        resultText,
       });
 
       if (result.updated) {

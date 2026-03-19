@@ -1,3 +1,4 @@
+// NOTE: Library module — wire into agent prompt injection when ready
 export interface AskOption {
   label: string;
   description: string;

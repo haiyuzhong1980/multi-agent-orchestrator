@@ -1,3 +1,4 @@
+// NOTE: Library module — wire into index.ts OAG event listener when ready
 import { readFileSync, existsSync } from "node:fs";
 
 // ─── OAG Event → OMA Observation ─────────────────────────────────────────────

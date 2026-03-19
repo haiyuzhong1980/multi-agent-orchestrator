@@ -28,20 +28,20 @@ export function createPromptBuilder(
     // Level 0: silent — no guidance injection
     if (!behavior.injectGuidance) return undefined;
 
-    // Preamble injection: 当有 active project 时，注入统一 Preamble
+    // Preamble injection: 当有 active project 时，注入统一 Preamble（prepend 到 guidance 前）
     const activeProjectsForPreamble = getActiveProjects(state.board);
-    if (activeProjectsForPreamble.length > 0) {
+    let preamblePrefix = "";
+    if (activeProjectsForPreamble.length > 0 && config.preambleConfig) {
       const activeProject = activeProjectsForPreamble[activeProjectsForPreamble.length - 1];
-      const preamble = buildUnifiedPreamble({
-        agentName: config.preambleConfig?.agentName ?? "orchestrator",
-        agentRole: config.preambleConfig?.agentRole ?? "编排者（orchestrator）",
-        sessionId: config.preambleConfig?.sessionId,
-        projectName: config.preambleConfig?.projectName ?? activeProject.name,
-        currentBranch: config.preambleConfig?.currentBranch,
-        activeAgentCount: config.preambleConfig?.activeAgentCount ?? activeProjectsForPreamble.length,
+      preamblePrefix = buildUnifiedPreamble({
+        agentName: config.preambleConfig.agentName ?? "orchestrator",
+        agentRole: config.preambleConfig.agentRole ?? "编排者（orchestrator）",
+        sessionId: config.preambleConfig.sessionId,
+        projectName: config.preambleConfig.projectName ?? activeProject.name,
+        currentBranch: config.preambleConfig.currentBranch,
+        activeAgentCount: config.preambleConfig.activeAgentCount ?? activeProjectsForPreamble.length,
       });
       api.logger.info(`[OMA] Preamble injected for project: ${activeProject.name}`);
-      return { prependSystemContext: preamble };
     }
 
     let guidance = buildOrchestratorPromptGuidance(config.executionPolicy);
@@ -97,6 +97,7 @@ export function createPromptBuilder(
       // 不清空 pendingDelegationRequest — 让它在整个对话轮次中保持，直到下一条消息覆盖
     }
 
-    return { appendSystemContext: guidance };
+    const fullGuidance = preamblePrefix ? `${preamblePrefix}\n\n${guidance}` : guidance;
+    return { appendSystemContext: fullGuidance };
   };
 }
