@@ -101,18 +101,18 @@ ClawTeam 有成熟的 `AgentIdentity` 数据类和丰富的消息类型。
 
 | ID | 任务 | 优先级 | 依赖 | 状态 |
 |----|------|--------|------|------|
-| M6-01 | 创建 `AgentIdentity` 类型定义 | P0 | - | ⏳ |
-| M6-02 | 在 PluginState 中添加 `agentIdentity: AgentIdentity` | P0 | M6-01 | ⏳ |
-| M6-03 | 修改 `buildUnifiedPreamble()` 注入完整身份信息 | P0 | M6-02 | ⏳ |
-| M6-04 | 创建 `MessageType` 枚举 (message, join_request, plan_approval, etc.) | P0 | - | ⏳ |
-| M6-05 | 创建 `TeamMessage` 类型定义 | P0 | M6-04 | ⏳ |
-| M6-06 | 扩展 `subagent_spawned` hook 支持消息类型 | P1 | M6-05 | ⏳ |
-| M6-07 | 扩展 `subagent_ended` hook 支持消息类型 | P1 | M6-05 | ⏳ |
-| M6-08 | 添加 `/mao-inbox-send <toAgent> <message>` 命令 | P1 | M6-05 | ⏳ |
-| M6-09 | 添加 `/mao-inbox-receive` 命令 | P1 | M6-05 | ⏳ |
-| M6-10 | 实现消息持久化到 `~/.openclaw/shared-memory/inbox/` | P1 | M6-05 | ⏳ |
-| M6-11 | 编写身份系统单元测试 | P0 | M6-03 | ⏳ |
-| M6-12 | 编写消息系统单元测试 | P0 | M6-10 | ⏳ |
+| M6-01 | 创建 `AgentIdentity` 类型定义 | P0 | - | ✅ |
+| M6-02 | 在 PluginState 中添加 `agentIdentity: AgentIdentity` | P0 | M6-01 | ✅ |
+| M6-03 | 修改 `buildUnifiedPreamble()` 注入完整身份信息 | P0 | M6-02 | ✅ |
+| M6-04 | 创建 `MessageType` 枚举 (message, join_request, plan_approval, etc.) | P0 | - | ✅ |
+| M6-05 | 创建 `TeamMessage` 类型定义 | P0 | M6-04 | ✅ |
+| M6-06 | 扩展 `subagent_spawned` hook 支持消息类型 | P1 | M6-05 | ✅ |
+| M6-07 | 扩展 `subagent_ended` hook 支持消息类型 | P1 | M6-05 | ✅ |
+| M6-08 | 添加 `/mao-inbox-send <toAgent> <message>` 命令 | P1 | M6-05 | ✅ |
+| M6-09 | 添加 `/mao-inbox-receive` 命令 | P1 | M6-05 | ✅ |
+| M6-10 | 实现消息持久化到 `~/.openclaw/shared-memory/inbox/` | P1 | M6-05 | ✅ |
+| M6-11 | 编写身份系统单元测试 | P0 | M6-03 | ✅ |
+| M6-12 | 编写消息系统单元测试 | P0 | M6-10 | ✅ |
 
 ### 数据结构定义
 
@@ -288,12 +288,12 @@ blockedBy = ["Security review"]  # 等待安全审查完成
 
 ```
 M5: [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x]  15/15 ✅
-M6: [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]            0/12
+M6: [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x] [x]            12/12 ✅
 M7: [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]       0/12
 M8: [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]               0/10
 B:  [ ] [ ] [ ] [ ]                                            0/4
 
-总计: 15/53 任务
+总计: 27/53 任务
 ```
 
 ---

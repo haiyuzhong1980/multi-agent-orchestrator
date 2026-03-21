@@ -7,6 +7,8 @@
  * - 当 3+ agent 并行时，自动加强上下文定位块
  */
 
+import type { AgentIdentity } from "./types.ts";
+
 export interface PreambleConfig {
   agentName: string;
   agentRole: string;
@@ -14,6 +16,8 @@ export interface PreambleConfig {
   projectName?: string;
   currentBranch?: string;
   activeAgentCount?: number;
+  // M6: Full agent identity
+  identity?: AgentIdentity;
 }
 
 /**
@@ -34,6 +38,7 @@ export function buildUnifiedPreamble(config: PreambleConfig): string {
     projectName,
     currentBranch,
     activeAgentCount = 1,
+    identity,
   } = config;
 
   const isHighConcurrency = activeAgentCount >= 3;
@@ -41,19 +46,30 @@ export function buildUnifiedPreamble(config: PreambleConfig): string {
   const sections: string[] = [];
 
   // ── Block 1: 角色定位 ──────────────────────────────────────────
-  sections.push(
-    [
-      "══════════════════════════════════════════",
-      `[OMA Preamble — ${agentName}]`,
-      "══════════════════════════════════════════",
-      "",
-      `你是 ${agentRole}，当前任务由 OMA 编排系统（multi-agent-orchestrator）派遣。`,
-      `Agent 名称：${agentName}`,
-      sessionId ? `Session ID：${sessionId}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
+  const roleLines: (string | null)[] = [
+    "══════════════════════════════════════════",
+    `[OMA Preamble — ${agentName}]`,
+    "══════════════════════════════════════════",
+    "",
+    `你是 ${agentRole}，当前任务由 OMA 编排系统（multi-agent-orchestrator）派遣。`,
+    `Agent 名称：${agentName}`,
+  ];
+
+  // M6: Include full identity if available
+  if (identity) {
+    roleLines.push(`Agent ID：${identity.agentId}`);
+    roleLines.push(`Agent 类型：${identity.agentType}`);
+    if (identity.teamName) {
+      roleLines.push(`所属团队：${identity.teamName}`);
+    }
+    if (identity.isLeader) {
+      roleLines.push(`角色：团队 Leader`);
+    }
+  } else if (sessionId) {
+    roleLines.push(`Session ID：${sessionId}`);
+  }
+
+  sections.push(roleLines.filter(Boolean).join("\n"));
 
   // ── Block 2: Session 上下文 ────────────────────────────────────
   // 当 3+ agent 并行时，假设用户已 20 分钟没看这个窗口，强制重新定位上下文

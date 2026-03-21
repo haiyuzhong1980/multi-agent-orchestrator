@@ -18,8 +18,9 @@ import { createAuditLog } from "./audit-log.ts";
 import type { AuditLog } from "./audit-log.ts";
 import { createSessionState } from "./session-state.ts";
 import type { OrchestratorSessionState } from "./session-state.ts";
+import type { AgentIdentity } from "./types.ts";
 
-export type { SpawnTracker, TaskBoard, UserKeywords, IntentRegistry, EnforcementState, OnboardingState, OrchestratorSessionState };
+export type { SpawnTracker, TaskBoard, UserKeywords, IntentRegistry, EnforcementState, OnboardingState, OrchestratorSessionState, AgentIdentity };
 
 export interface PluginState {
   board: TaskBoard;
@@ -30,6 +31,8 @@ export interface PluginState {
   spawnTracker: SpawnTracker;
   auditLog: AuditLog;
   sessionState: OrchestratorSessionState;
+  // M6: Agent identity
+  agentIdentity: AgentIdentity | null;
   resumeInjected: boolean;
   onboardingMessageSent: boolean;
   lastClassification: { phrases: string[]; tier: "light" | "tracked" | "delegation"; timestamp: number } | null;
@@ -101,6 +104,7 @@ export function createPluginState(sharedRoot: string): PluginState {
     spawnTracker,
     auditLog,
     sessionState,
+    agentIdentity: null,
     resumeInjected: false,
     onboardingMessageSent: false,
     lastClassification: null,

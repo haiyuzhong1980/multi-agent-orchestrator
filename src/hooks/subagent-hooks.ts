@@ -10,10 +10,13 @@ import { processSubagentResult, isProjectReadyForReview } from "../result-collec
 import { reviewProject, prepareRetries } from "../review-gate.ts";
 import { generateProjectReport } from "../report-generator.ts";
 import type { PluginState } from "../plugin-state.ts";
+// M6: Message system
+import { createAgentIdentity, sendMessage, MessageType } from "../message-manager.ts";
 
 export function createSubagentHooks(
   state: PluginState,
   api: Pick<OpenClawPluginApi, "logger">,
+  sharedRoot: string = "",
 ): {
   subagentSpawned: (event: Record<string, unknown>) => Promise<undefined>;
   subagentEnded: (event: Record<string, unknown>) => Promise<undefined>;
@@ -21,20 +24,32 @@ export function createSubagentHooks(
   async function subagentSpawned(event: Record<string, unknown>): Promise<undefined> {
     const sessionKey = event.childSessionKey as string | undefined;
     const label = event.label as string | undefined;
+    const agentId = event.agentId as string | undefined;
 
     logEvent(state.auditLog, "subagent_spawned", {
       sessionKey,
-      agentId: event.agentId,
+      agentId,
       label,
     });
 
     recordSpawn(state.spawnTracker, {
       sessionKey: sessionKey ?? `unknown-${Date.now()}`,
-      agentId: event.agentId as string | undefined,
+      agentId,
       label,
       task: event.task as string | undefined,
     });
     state.currentDelegationSpawnCount += 1;
+
+    // M6: Create agent identity if this is a new agent
+    if (sessionKey && agentId && !state.agentIdentity) {
+      state.agentIdentity = createAgentIdentity({
+        agentId: sessionKey,
+        agentName: label ?? agentId,
+        agentType: agentId,
+        teamName: event.teamName as string | undefined,
+        isLeader: event.isLeader as boolean | undefined,
+      });
+    }
 
     // Find a pending task matching by label or trackId and mark dispatched
     if (sessionKey) {
@@ -92,6 +107,21 @@ export function createSubagentHooks(
 
       if (result.updated) {
         api.logger.info(`[OMA] Task ${result.taskId} updated: ${outcome}`);
+
+        // M6: Send task_completed message if we have identity and sharedRoot
+        if (sharedRoot && state.agentIdentity && normalizedOutcome === "ok") {
+          sendMessage(sharedRoot, {
+            type: MessageType.task_completed,
+            from: state.agentIdentity.agentId,
+            to: null, // Broadcast to team
+            content: `Task ${result.taskId} completed successfully`,
+            metadata: {
+              taskId: result.taskId,
+              projectId: result.projectId,
+              teamName: state.agentIdentity.teamName,
+            },
+          });
+        }
 
         // E4: Auto-review when project is ready
         const project = getProject(state.board, result.projectId!);

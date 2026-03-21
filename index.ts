@@ -20,6 +20,14 @@ import {
 import { reviewProject } from "./src/review-gate.ts";
 import { checkAndResume } from "./src/session-resume.ts";
 import { generateProjectReport } from "./src/report-generator.ts";
+// M6: Message system
+import {
+  sendMessage,
+  getPendingMessages,
+  markMessageProcessed,
+  formatMessages,
+  MessageType,
+} from "./src/message-manager.ts";
 import { addUserKeyword, saveUserKeywords } from "./src/user-keywords.ts";
 import {
   saveIntentRegistry,
@@ -433,6 +441,82 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       return { text: "Invalid syntax. Use --needs or --unblock." };
+    },
+  });
+
+  // M6-08: Send message to another agent
+  api.registerCommand({
+    name: "mao-inbox-send",
+    description: "Send a message to another agent. Usage: /mao-inbox-send <toAgent> <message>",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const args = (ctx.args ?? "").trim();
+      const match = args.match(/^(\S+)\s+(.+)$/s);
+      if (!match) {
+        return { text: "Usage: /mao-inbox-send <toAgent> <message>" };
+      }
+      const [, toAgent, content] = match;
+
+      if (!state.agentIdentity) {
+        return { text: "No agent identity set. This command is only available to spawned agents." };
+      }
+
+      const msg = sendMessage(state.sharedRoot, {
+        type: MessageType.message,
+        from: state.agentIdentity.agentId,
+        to: toAgent,
+        content,
+        metadata: {
+          teamName: state.agentIdentity.teamName,
+        },
+      });
+
+      return { text: `✅ Message sent to ${toAgent} (ID: ${msg.id})` };
+    },
+  });
+
+  // M6-09: Check inbox for pending messages
+  api.registerCommand({
+    name: "mao-inbox",
+    description: "Check pending messages in your inbox",
+    handler: () => {
+      if (!state.agentIdentity) {
+        return { text: "No agent identity set. This command is only available to spawned agents." };
+      }
+
+      const messages = getPendingMessages(
+        state.sharedRoot,
+        state.agentIdentity.teamName,
+        state.agentIdentity.agentId,
+      );
+
+      return { text: formatMessages(messages) };
+    },
+  });
+
+  // Mark a message as processed
+  api.registerCommand({
+    name: "mao-inbox-done",
+    description: "Mark a message as processed. Usage: /mao-inbox-done <messageId>",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const messageId = (ctx.args ?? "").trim();
+      if (!messageId) {
+        return { text: "Usage: /mao-inbox-done <messageId>" };
+      }
+
+      if (!state.agentIdentity) {
+        return { text: "No agent identity set." };
+      }
+
+      const success = markMessageProcessed(
+        state.sharedRoot,
+        state.agentIdentity.teamName,
+        state.agentIdentity.agentId,
+        messageId,
+      );
+
+      return { text: success ? `✅ Message ${messageId} marked as processed` : `❌ Message ${messageId} not found` };
     },
   });
 
