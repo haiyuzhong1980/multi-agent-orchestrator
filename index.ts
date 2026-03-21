@@ -10,6 +10,12 @@ import {
   getActiveProjects,
   getProject,
   formatBoardDisplay,
+  findTaskById,
+  isTaskBlocked,
+  getDownstreamTasks,
+  addTaskDependency,
+  removeTaskDependency,
+  saveBoard,
 } from "./src/task-board.ts";
 import { reviewProject } from "./src/review-gate.ts";
 import { checkAndResume } from "./src/session-resume.ts";
@@ -331,6 +337,102 @@ export default function register(api: OpenClawPluginApi) {
         }),
       ];
       return { text: lines.join("\n") };
+    },
+  });
+
+  // M5-10: Show task dependencies
+  api.registerCommand({
+    name: "mao-task-dependencies",
+    description: "Show dependencies and blockers for a task",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const taskId = (ctx.args ?? "").trim();
+      if (!taskId) return { text: "Usage: /mao-task-dependencies <task-id>" };
+      const task = findTaskById(state.board, taskId);
+      if (!task) return { text: `No task found with ID "${taskId}"` };
+
+      const lines = [
+        `**Task: ${task.label}** (${task.id})`,
+        `Status: ${task.status}`,
+      ];
+
+      // Dependencies (tasks this task waits for)
+      if (task.blockedBy.length > 0) {
+        lines.push("", "**Blocked by:**");
+        for (const depId of task.blockedBy) {
+          const depTask = findTaskById(state.board, depId);
+          if (depTask) {
+            const status = depTask.status;
+            const isComplete = status === "completed" || status === "approved";
+            lines.push(`  ${isComplete ? "✅" : "⏳"} ${depId}: ${depTask.label} (${status})`);
+          } else {
+            lines.push(`  ❓ ${depId}: (not found)`);
+          }
+        }
+        const blocked = isTaskBlocked(state.board, task);
+        lines.push(``, blocked ? "⚠️ This task is BLOCKED" : "✅ All dependencies satisfied");
+      } else {
+        lines.push("", "**Blocked by:** (none)");
+      }
+
+      // Blocking (tasks waiting for this task)
+      const downstream = getDownstreamTasks(state.board, taskId);
+      if (downstream.length > 0) {
+        lines.push("", "**Blocks:**");
+        for (const t of downstream) {
+          lines.push(`  - ${t.id}: ${t.label} (${t.status})`);
+        }
+      } else {
+        lines.push("", "**Blocks:** (none)");
+      }
+
+      // Lock status
+      if (task.lockedBy) {
+        lines.push("", `🔒 **Locked by:** ${task.lockedBy} (since ${task.lockedAt})`);
+      }
+
+      return { text: lines.join("\n") };
+    },
+  });
+
+  // M5-11: Add/remove task dependency
+  api.registerCommand({
+    name: "mao-task-dep",
+    description: "Add or remove a task dependency. Usage: /mao-task-dep <taskId> --needs <otherTaskId> | --unblock <otherTaskId>",
+    acceptsArgs: true,
+    handler: (ctx) => {
+      const args = (ctx.args ?? "").trim();
+      if (!args) {
+        return {
+          text: [
+            "Usage:",
+            "  /mao-task-dep <taskId> --needs <otherTaskId>  # Add dependency",
+            "  /mao-task-dep <taskId> --unblock <otherTaskId>  # Remove dependency",
+          ].join("\n"),
+        };
+      }
+
+      const needsMatch = args.match(/^(\S+)\s+--needs\s+(\S+)$/);
+      const unblockMatch = args.match(/^(\S+)\s+--unblock\s+(\S+)$/);
+
+      if (needsMatch) {
+        const [, blockedTaskId, blockingTaskId] = needsMatch;
+        const result = addTaskDependency(state.board, blockingTaskId, blockedTaskId);
+        if (result.success) {
+          saveBoard(state.sharedRoot, state.board);
+          return { text: `✅ Added dependency: ${blockingTaskId} → ${blockedTaskId}` };
+        }
+        return { text: `❌ Failed: ${result.error}` };
+      }
+
+      if (unblockMatch) {
+        const [, blockedTaskId, blockingTaskId] = unblockMatch;
+        removeTaskDependency(state.board, blockingTaskId, blockedTaskId);
+        saveBoard(state.sharedRoot, state.board);
+        return { text: `✅ Removed dependency: ${blockingTaskId} → ${blockedTaskId}` };
+      }
+
+      return { text: "Invalid syntax. Use --needs or --unblock." };
     },
   });
 
