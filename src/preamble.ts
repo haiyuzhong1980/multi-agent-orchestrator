@@ -18,6 +18,8 @@ export interface PreambleConfig {
   activeAgentCount?: number;
   // M6: Full agent identity
   identity?: AgentIdentity;
+  // M7: Communication commands
+  inboxCommands?: boolean;
 }
 
 /**
@@ -39,9 +41,11 @@ export function buildUnifiedPreamble(config: PreambleConfig): string {
     currentBranch,
     activeAgentCount = 1,
     identity,
+    inboxCommands = true,
   } = config;
 
   const isHighConcurrency = activeAgentCount >= 3;
+  const hasTeam = identity?.teamName !== null;
 
   const sections: string[] = [];
 
@@ -125,6 +129,38 @@ export function buildUnifiedPreamble(config: PreambleConfig): string {
       "- 不要跳步骤——按照任务要求逐步完成，不要合并或省略步骤",
       "- 不要在没有证据的情况下声称任务已完成",
       "- 不要把所有工作放在一个 agent 里（除非任务明确不可拆分）",
+    ].join("\n"),
+  );
+
+  // ── Block 6: 通信指令（M7）─────────────────────────────────────
+  if (inboxCommands && hasTeam) {
+    sections.push(
+      [
+        "",
+        "── 通信指令（Communication Commands）──",
+        "作为团队 Agent，你可以与其他 Agent 通信：",
+        "",
+        "发送消息：",
+        "  /mao-inbox-send <agentId> <message>",
+        "",
+        "查看收件箱：",
+        "  /mao-inbox",
+        "",
+        "标记已处理：",
+        "  /mao-inbox-done <messageId>",
+        "",
+        "消息类型：message, task_completed, task_blocked, broadcast",
+        "",
+        "使用场景：",
+        "- 任务完成 → 发送 task_completed 广播",
+        "- 被阻塞 → 发送 task_blocked 给 Leader",
+        "- 需要协作 → 发送 message 给相关 Agent",
+      ].join("\n"),
+    );
+  }
+
+  sections.push(
+    [
       "",
       "══════════════════════════════════════════",
       "",

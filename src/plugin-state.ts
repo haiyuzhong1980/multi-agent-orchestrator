@@ -19,8 +19,9 @@ import type { AuditLog } from "./audit-log.ts";
 import { createSessionState } from "./session-state.ts";
 import type { OrchestratorSessionState } from "./session-state.ts";
 import type { AgentIdentity } from "./types.ts";
+import type { MailboxManager } from "./mailbox.ts";
 
-export type { SpawnTracker, TaskBoard, UserKeywords, IntentRegistry, EnforcementState, OnboardingState, OrchestratorSessionState, AgentIdentity };
+export type { SpawnTracker, TaskBoard, UserKeywords, IntentRegistry, EnforcementState, OnboardingState, OrchestratorSessionState, AgentIdentity, MailboxManager };
 
 export interface PluginState {
   board: TaskBoard;
