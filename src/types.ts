@@ -47,10 +47,3 @@ export type CandidateItem = {
   raw: string;
   comments: number | null;
 };
-
-export type OrchestratorConfig = {
-  maxItemsPerTrack?: number;
-  executionPolicy?: ExecutionPolicyMode;
-  delegationStartGate?: DelegationStartGateMode;
-  logger?: (message: string) => void;
-};

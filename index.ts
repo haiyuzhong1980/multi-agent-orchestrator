@@ -51,6 +51,11 @@ import { createMessageHandler } from "./src/hooks/message-handler.ts";
 import { createPromptBuilder } from "./src/hooks/prompt-builder.ts";
 import { createToolHooks } from "./src/hooks/tool-hooks.ts";
 import { createSubagentHooks } from "./src/hooks/subagent-hooks.ts";
+import {
+  oagEventToObservation,
+  type OagEvent,
+} from "./src/oag-bridge.ts";
+import { appendObservation } from "./src/observation-engine.ts";
 
 const OFMS_SHARED_ROOT =
   process.env.OFMS_SHARED_ROOT ?? join(process.env.HOME ?? "", ".openclaw/shared-memory");
@@ -60,6 +65,8 @@ type PluginConfig = {
   maxItemsPerTrack?: number;
   executionPolicy?: "free" | "guided" | "tracked" | "delegation-first" | "strict-orchestrated";
   delegationStartGate?: "off" | "advisory" | "required";
+  /** Manual override: force enforcement level (0-3). Skips natural progression. */
+  enforcementLevel?: 0 | 1 | 2 | 3;
 };
 
 export default function register(api: OpenClawPluginApi) {
@@ -78,6 +85,20 @@ export default function register(api: OpenClawPluginApi) {
 
   // Initialize all plugin state
   const state = createPluginState(OFMS_SHARED_ROOT);
+
+  // Manual enforcement level override — skip natural progression
+  if (typeof pluginConfig.enforcementLevel === "number" && [0, 1, 2, 3].includes(pluginConfig.enforcementLevel)) {
+    const overrideLevel = pluginConfig.enforcementLevel as 0 | 1 | 2 | 3;
+    if (state.enforcementState.currentLevel !== overrideLevel) {
+      state.enforcementState.currentLevel = overrideLevel;
+      state.enforcementState.levelHistory.push({
+        level: overrideLevel,
+        timestamp: new Date().toISOString(),
+        reason: `manual override via pluginConfig.enforcementLevel=${overrideLevel}`,
+      });
+      api.logger.info(`[OMA] Enforcement level manually set to L${overrideLevel}`);
+    }
+  }
 
   const tool = createMultiAgentOrchestratorTool({
     executionPolicy,
@@ -118,6 +139,39 @@ export default function register(api: OpenClawPluginApi) {
   const subagentHooks = createSubagentHooks(state, api);
   api.on("subagent_spawned", subagentHooks.subagentSpawned);
   api.on("subagent_ended", subagentHooks.subagentEnded);
+
+  // OAG-OMA Bridge: Subscribe to OAG events and translate to OMA observations
+  // This wiring enables OAG channel health events to trigger OMA agent dispatch
+  const unsubscribeOag = api.onOagEvent?.((event: { type: string; timestamp: number; data?: unknown }) => {
+    if (event.type === "anomaly_detected" || event.type === "channel_state_changed") {
+      try {
+        const oagEvent = event.data as OagEvent;
+        const obs = oagEventToObservation(oagEvent);
+        appendObservation(OFMS_SHARED_ROOT, {
+          id: `oag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          timestamp: new Date().toISOString(),
+          agent: obs.agent,
+          messageText: obs.message,
+          messageLength: obs.message.length,
+          language: "en",
+          hasNumberedList: false,
+          actionVerbCount: 0,
+          predictedTier: obs.predictedTier,
+          toolsCalled: [],
+          didSpawnSubagent: false,
+          spawnCount: 0,
+          userFollowUp: null,
+          actualTier: null,
+        });
+        api.logger.info(`[OMA] OAG event translated to observation: ${event.type} → ${obs.predictedTier}`);
+      } catch (err) {
+        api.logger.warn(`[OMA] Failed to translate OAG event: ${String(err)}`);
+      }
+    }
+  });
+  if (unsubscribeOag) {
+    api.logger.info("[OMA] OAG event bridge wired successfully");
+  }
 
   // Register commands
   api.registerCommand({
@@ -352,54 +406,6 @@ export default function register(api: OpenClawPluginApi) {
       }
       const report = generateProjectReport(project);
       return { text: report };
-    },
-  });
-
-  api.registerCommand({
-    name: "maotest",
-    description: "Run a deterministic self-test for the multi-agent orchestrator plugin.",
-    handler: async () => {
-      const plan = await tool.execute("maotest-plan", {
-        action: "plan_tracks",
-        request:
-          "真实执行一个多 agent 调研：一个子 agent 查 openclaw 最近 7 天评论最多的 issues，一个子 agent 查最近 7 天评论最多的 discussions，最后主 agent 汇总。",
-      });
-      const merged = await tool.execute("maotest-merge", {
-        action: "validate_and_merge",
-        tracks: [
-          {
-            trackId: "issues-track",
-            label: "Issues",
-            resultText:
-              "- Tool exec failure triggers gateway restart loop https://github.com/openclaw/openclaw/issues/101",
-          },
-          {
-            trackId: "discussions-track",
-            label: "Discussions",
-            resultText:
-              "Page not found\nEXTERNAL_UNTRUSTED_CONTENT\n- Good discussion https://github.com/openclaw/openclaw/discussions/22",
-          },
-        ],
-      });
-
-      const policy = await tool.execute("maotest-policy", {
-        action: "enforce_execution_policy",
-        request: "真实执行一个多 agent 调研，按步骤汇报并派出子 agent。",
-        hasTaskBus: true,
-        hasPlan: true,
-        hasCheckpoint: true,
-        hasWorkerStart: false,
-        hasTrackedExecution: false,
-        currentStep: 1,
-        totalSteps: 3,
-      });
-
-      const planText = String(plan.content?.[0]?.text ?? "").trim();
-      const mergedText = String(merged.content?.[0]?.text ?? "").trim();
-      const policyText = String(policy.content?.[0]?.text ?? "").trim();
-      return {
-        text: ["[maotest] plan", planText, "", "[maotest] merge", mergedText, "", "[maotest] policy", policyText].join("\n"),
-      };
     },
   });
 

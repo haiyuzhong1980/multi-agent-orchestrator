@@ -159,7 +159,6 @@ OMA learns from every interaction and continuously improves its ability to detec
 | `/mao-resume` | Check for interrupted work from previous sessions |
 | `/mao-report [projectId]` | Generate a completion report for a project |
 | `/mao-run` | (alias: `orchestrate` action) Plan and dispatch a new project |
-| `/maotest` | Run a deterministic self-test (plan + merge + policy) |
 | `/mao-audit` | View the audit log for the current session |
 | `/mao-state` | Show current evolution state |
 | `/mao-observations` | View observation statistics |

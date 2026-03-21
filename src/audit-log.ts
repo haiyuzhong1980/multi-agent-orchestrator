@@ -3,7 +3,10 @@ export interface AuditEntry {
   event:
     | "policy_check"
     | "tool_blocked"
+    | "tool_warned_l2"
+    | "tool_blocked_l2"
     | "tool_blocked_l3"
+    | "tool_blocked_policy"
     | "subagent_spawned"
     | "subagent_ended"
     | "plan_created"

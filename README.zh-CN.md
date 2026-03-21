@@ -521,17 +521,8 @@ npm install
 # 运行所有测试（979 个）
 npm test
 
-# 运行确定性自测（不需要真实 API）
-/maotest
-
 # CLI 自测
 openclaw mao-selftest
-
-# 30 天模拟（验证自进化引擎）
-./tests/simulation/run.sh
-
-# 90 天压测
-./tests/simulation/run.sh --days 90 --messages 80
 ```
 
 **测试覆盖（v3.0.0）：**

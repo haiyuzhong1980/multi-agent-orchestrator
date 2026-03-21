@@ -12,6 +12,7 @@ import {
   applyLevelChange,
   evaluateAndAdjust,
   formatEnforcementStatus,
+  DEFAULT_STARTING_LEVEL,
 } from "../src/enforcement-ladder.ts";
 import type { EnforcementState } from "../src/enforcement-ladder.ts";
 import type { ObservationStats } from "../src/observation-engine.ts";
@@ -44,14 +45,15 @@ function makeStats(overrides: Partial<ObservationStats> = {}): ObservationStats 
 // createDefaultState
 // ---------------------------------------------------------------------------
 describe("createDefaultState", () => {
-  it("starts at level 0", () => {
+  it(`starts at DEFAULT_STARTING_LEVEL (${DEFAULT_STARTING_LEVEL})`, () => {
     const state = createDefaultState();
-    assert.equal(state.currentLevel, 0);
+    assert.equal(state.currentLevel, DEFAULT_STARTING_LEVEL);
   });
 
-  it("has empty level history", () => {
+  it("has initial level history entry", () => {
     const state = createDefaultState();
-    assert.deepEqual(state.levelHistory, []);
+    assert.equal(state.levelHistory.length, 1);
+    assert.equal(state.levelHistory[0].level, DEFAULT_STARTING_LEVEL);
   });
 
   it("lastUpgrade and lastDowngrade are null", () => {
@@ -118,7 +120,7 @@ describe("getEnforcementBehavior", () => {
 // ---------------------------------------------------------------------------
 describe("shouldUpgrade", () => {
   it("0→1 when observations reach 20", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     const stats = makeStats({ totalObservations: 20 });
     const result = shouldUpgrade(state, stats);
     assert.equal(result.upgrade, true);
@@ -126,7 +128,7 @@ describe("shouldUpgrade", () => {
   });
 
   it("0→1 not triggered below 20 observations", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     const stats = makeStats({ totalObservations: 19 });
     const result = shouldUpgrade(state, stats);
     assert.equal(result.upgrade, false);
@@ -231,7 +233,7 @@ describe("shouldDowngrade", () => {
   });
 
   it("Level 0 never downgrades (returns no downgrade)", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     const result = shouldDowngrade(state, 100, 100);
     assert.equal(result.downgrade, false);
   });
@@ -242,17 +244,17 @@ describe("shouldDowngrade", () => {
 // ---------------------------------------------------------------------------
 describe("applyLevelChange", () => {
   it("updates currentLevel and adds to history", () => {
-    const state = createDefaultState();
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     applyLevelChange(state, 1, "reached 20 observations");
     assert.equal(state.currentLevel, 1);
-    assert.equal(state.levelHistory.length, 1);
-    assert.equal(state.levelHistory[0].level, 1);
-    assert.equal(state.levelHistory[0].reason, "reached 20 observations");
-    assert.ok(state.levelHistory[0].timestamp);
+    assert.equal(state.levelHistory.length, 2); // initial 1 + new 1
+    assert.equal(state.levelHistory[1].level, 1);
+    assert.equal(state.levelHistory[1].reason, "reached 20 observations");
+    assert.ok(state.levelHistory[1].timestamp);
   });
 
   it("sets lastUpgrade on upgrade", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     applyLevelChange(state, 1, "upgrade test");
     assert.ok(state.lastUpgrade !== null);
     assert.equal(state.lastDowngrade, null);
@@ -266,11 +268,11 @@ describe("applyLevelChange", () => {
   });
 
   it("accumulates multiple history entries", () => {
-    const state = createDefaultState();
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     applyLevelChange(state, 1, "first");
     applyLevelChange(state, 2, "second");
     applyLevelChange(state, 1, "third");
-    assert.equal(state.levelHistory.length, 3);
+    assert.equal(state.levelHistory.length, 4); // initial 1 + 3 changes
     assert.equal(state.currentLevel, 1);
   });
 });
@@ -280,7 +282,7 @@ describe("applyLevelChange", () => {
 // ---------------------------------------------------------------------------
 describe("evaluateAndAdjust", () => {
   it("upgrades when ready — full cycle", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     const stats = makeStats({ totalObservations: 25, accuracy: 0 });
     const result = evaluateAndAdjust(state, stats, 0);
     assert.equal(result.changed, true);
@@ -333,7 +335,7 @@ describe("evaluateAndAdjust", () => {
 describe("loadEnforcementState / saveEnforcementState", () => {
   it("round-trip: saved state can be loaded back", () => {
     const dir = makeTmpDir();
-    const state = createDefaultState();
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     applyLevelChange(state, 1, "test save");
     state.observationCount = 42;
     state.correctionCount = 7;
@@ -344,21 +346,21 @@ describe("loadEnforcementState / saveEnforcementState", () => {
     assert.equal(loaded.currentLevel, 1);
     assert.equal(loaded.observationCount, 42);
     assert.equal(loaded.correctionCount, 7);
-    assert.equal(loaded.levelHistory.length, 1);
-    assert.equal(loaded.levelHistory[0].reason, "test save");
+    assert.equal(loaded.levelHistory.length, 2); // initial 1 + applyLevelChange 1
+    assert.equal(loaded.levelHistory[1].reason, "test save");
   });
 
   it("returns default state when file does not exist", () => {
     const loaded = loadEnforcementState("/tmp/nonexistent-enforcement-dir-xyz-999");
-    assert.equal(loaded.currentLevel, 0);
-    assert.deepEqual(loaded.levelHistory, []);
+    assert.equal(loaded.currentLevel, DEFAULT_STARTING_LEVEL);
+    assert.equal(loaded.levelHistory.length, 1);
   });
 
   it("returns default state when file is malformed JSON", () => {
     const dir = makeTmpDir();
     writeFileSync(join(dir, "enforcement-state.json"), "not valid json", "utf-8");
     const loaded = loadEnforcementState(dir);
-    assert.equal(loaded.currentLevel, 0);
+    assert.equal(loaded.currentLevel, DEFAULT_STARTING_LEVEL);
   });
 
   it("creates directory if it does not exist when saving", () => {
@@ -377,7 +379,7 @@ describe("formatEnforcementStatus", () => {
   it("returns readable output with level info", () => {
     const state = createDefaultState();
     const text = formatEnforcementStatus(state);
-    assert.ok(text.includes("Level 0"));
+    assert.ok(text.includes(`Level ${DEFAULT_STARTING_LEVEL}`));
     assert.ok(text.includes("OMA Enforcement Status"));
   });
 
@@ -397,7 +399,7 @@ describe("formatEnforcementStatus", () => {
   });
 
   it("shows upgrade progress hint for level 0", () => {
-    const state = createDefaultState(); // level 0
+    const state: EnforcementState = { ...createDefaultState(), currentLevel: 0 };
     const stats = makeStats({ totalObservations: 5 });
     const text = formatEnforcementStatus(state, stats);
     assert.ok(text.includes("To Level 1"));

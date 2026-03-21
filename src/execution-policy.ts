@@ -165,6 +165,33 @@ export function inferExecutionComplexity(
   return "light";
 }
 
+/**
+ * Check if a tool call should be blocked based on execution policy violations.
+ * Returns a block reason string if blocked, null if allowed.
+ * This is the "teeth" — violations are no longer just reports.
+ */
+export function checkPolicyBlock(
+  mode: ExecutionPolicyMode,
+  delegationStartGate: DelegationStartGateMode,
+  complexity: "light" | "tracked" | "delegation",
+  guardState: ExecutionGuardRequest,
+): string | null {
+  // Free mode never blocks
+  if (mode === "free") return null;
+  // Light tasks never blocked
+  if (complexity === "light") return null;
+
+  const requiresDelegation = shouldRequireDelegation(mode, complexity);
+  const enforceDispatchFirst = delegationStartGate === "required" && requiresDelegation;
+
+  // Critical violation: delegation required but no worker spawned, and gate is enforced
+  if (enforceDispatchFirst && !guardState.hasWorkerStart && !guardState.hasTrackedExecution) {
+    return `执行策略 ${mode} + delegationStartGate=required: 当前任务 (${complexity}) 需要先派遣子 agent。请先调用 multi-agent-orchestrator action=orchestrate 创建任务并派遣 worker。`;
+  }
+
+  return null;
+}
+
 export function shouldRequireTaskBus(
   mode: ExecutionPolicyMode,
   complexity: ReturnType<typeof inferExecutionComplexity>,

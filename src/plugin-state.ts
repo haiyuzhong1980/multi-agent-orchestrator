@@ -37,6 +37,7 @@ export interface PluginState {
   pendingDelegationRequest: string | null;
   delegationInjectionCount: number;
   currentDelegationSpawnCount: number;
+  softBlockWarningCount: number;  // L2: tracks non-dispatch tool calls for soft blocking
   scheduleBoardSave: () => void;
   scheduleIntentRegistrySave: () => void;
 }
@@ -107,6 +108,7 @@ export function createPluginState(sharedRoot: string): PluginState {
     pendingDelegationRequest: null,
     delegationInjectionCount: 0,
     currentDelegationSpawnCount: 0,
+    softBlockWarningCount: 0,
     scheduleBoardSave,
     scheduleIntentRegistrySave,
   };

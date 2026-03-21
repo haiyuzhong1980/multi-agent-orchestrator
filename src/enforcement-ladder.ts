@@ -22,6 +22,7 @@ export interface EnforcementBehavior {
   injectGuidance: boolean;       // inject orchestration guidance into prompt
   injectDispatchPlan: boolean;   // inject specific dispatch plan for pending tasks
   blockNonDispatchTools: boolean; // hard-block tools until subagent spawned
+  softBlockNonDispatchTools: boolean; // L2: warn first call, block second call
   logOnly: boolean;              // only log, don't enforce
   advisoryMessage: string | null; // soft suggestion text (Level 1)
 }
@@ -45,10 +46,16 @@ const DOWNGRADE_BUFFER_DAYS = 2;             // must exceed threshold 2 consecut
 /**
  * Create a fresh enforcement state at Level 0.
  */
+/**
+ * Default starting level — L2 (Guided) so new installs get real dispatch plan injection.
+ * Previously L0 (silent), which meant zero enforcement for weeks.
+ */
+export const DEFAULT_STARTING_LEVEL: EnforcementLevel = 2;
+
 export function createDefaultState(): EnforcementState {
   return {
-    currentLevel: 0,
-    levelHistory: [],
+    currentLevel: DEFAULT_STARTING_LEVEL,
+    levelHistory: [{ level: DEFAULT_STARTING_LEVEL, timestamp: new Date(Date.now()).toISOString(), reason: "default install at L2" }],
     lastUpgrade: null,
     lastDowngrade: null,
     lastLevelChange: null,
@@ -105,6 +112,7 @@ export function getEnforcementBehavior(level: EnforcementLevel): EnforcementBeha
       injectGuidance: false,
       injectDispatchPlan: false,
       blockNonDispatchTools: false,
+      softBlockNonDispatchTools: false,
       logOnly: true,
       advisoryMessage: null,
     };
@@ -112,6 +120,7 @@ export function getEnforcementBehavior(level: EnforcementLevel): EnforcementBeha
       injectGuidance: true,
       injectDispatchPlan: false,
       blockNonDispatchTools: false,
+      softBlockNonDispatchTools: false,
       logOnly: false,
       advisoryMessage: "💡 OMA 建议：这个任务可能适合派遣子 agent 执行。可以调用 sessions_spawn 派工。",
     };
@@ -119,6 +128,7 @@ export function getEnforcementBehavior(level: EnforcementLevel): EnforcementBeha
       injectGuidance: true,
       injectDispatchPlan: true,
       blockNonDispatchTools: false,
+      softBlockNonDispatchTools: true,  // L2: warn first call, block second
       logOnly: false,
       advisoryMessage: null,
     };
@@ -126,6 +136,7 @@ export function getEnforcementBehavior(level: EnforcementLevel): EnforcementBeha
       injectGuidance: true,
       injectDispatchPlan: true,
       blockNonDispatchTools: true,
+      softBlockNonDispatchTools: false, // L3 uses hard block, no need for soft
       logOnly: false,
       advisoryMessage: null,
     };

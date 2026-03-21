@@ -9,6 +9,7 @@ import {
   appendEvolutionReport,
   formatEvolutionReport,
 } from "../src/evolution-cycle.ts";
+import { DEFAULT_STARTING_LEVEL } from "../src/enforcement-ladder.ts";
 import type { EvolutionReport } from "../src/evolution-cycle.ts";
 import {
   appendObservation,
@@ -120,8 +121,8 @@ describe("runEvolutionCycle: too few observations", () => {
       existingDelegationKeywords: [],
       existingTrackedKeywords: [],
     });
-    assert.equal(report.enforcementLevelBefore, 0);
-    assert.equal(report.enforcementLevelAfter, 0);
+    assert.equal(report.enforcementLevelBefore, DEFAULT_STARTING_LEVEL);
+    assert.equal(report.enforcementLevelAfter, DEFAULT_STARTING_LEVEL);
   });
 });
 
@@ -148,7 +149,7 @@ describe("runEvolutionCycle: with enough observations", () => {
   it("upgrades enforcement level when observations reach threshold", () => {
     const dir = makeTmpDir();
     writeObservations(dir, 25); // >= 20 → triggers 0→1
-    const state = createDefaultState(); // level 0
+    const state = { ...createDefaultState(), currentLevel: 0 as const }; // force level 0 for upgrade test
     const report = runEvolutionCycle({
       sharedRoot: dir,
       intentRegistry: makeEmptyRegistry(),

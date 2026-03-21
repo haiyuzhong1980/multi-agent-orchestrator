@@ -74,10 +74,12 @@ export function createMessageHandler(
       state.pendingDelegationRequest = text;
       state.delegationInjectionCount = 0;
       state.currentDelegationSpawnCount = 0;
+      state.softBlockWarningCount = 0;  // Reset L2 soft block counter for new delegation
       api.logger.info(`[OMA/L1] Delegation detected, will inject mandate on next prompt build`);
     } else {
       state.pendingDelegationRequest = null;
       state.delegationInjectionCount = 0;
+      state.softBlockWarningCount = 0;  // Reset on non-delegation messages too
     }
 
     // Create new observation
