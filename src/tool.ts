@@ -11,7 +11,7 @@ import { recordPlan, recordEnforcement, recordTrackResult, getMissingTracks, get
 import type { AuditLog } from "./audit-log.ts";
 import { logEvent } from "./audit-log.ts";
 import type { TaskBoard } from "./task-board.ts";
-import { loadBoard, saveBoard, createProject, addTask } from "./task-board.ts";
+import { loadBoard, saveBoard, createProject, addTask, addTaskDependency, findTaskByLabel } from "./task-board.ts";
 import { buildDispatchGuidance } from "./prompt-guidance.ts";
 import { runEvolutionCycle, appendEvolutionReport, formatEvolutionReport } from "./evolution-cycle.ts";
 import type { EvolutionReport } from "./evolution-cycle.ts";
@@ -220,6 +220,23 @@ export function createMultiAgentOrchestratorTool(params?: {
             contentType: track.contentType,
             subagentPrompt: track.subagentPrompt,
           });
+        }
+
+        // M5-12: Apply task dependencies if provided
+        // Format: { "Task A label": ["Task B label", "Task C label"] } means A blocks B and C
+        const rawTaskDeps = rawParams.taskDependencies as Record<string, string[]> | undefined;
+        if (rawTaskDeps) {
+          for (const [blockingLabel, blockedLabels] of Object.entries(rawTaskDeps)) {
+            const blockingTask = findTaskByLabel(project, blockingLabel);
+            if (blockingTask && Array.isArray(blockedLabels)) {
+              for (const blockedLabel of blockedLabels) {
+                const blockedTask = findTaskByLabel(project, blockedLabel);
+                if (blockedTask) {
+                  addTaskDependency(board, blockingTask.id, blockedTask.id);
+                }
+              }
+            }
+          }
         }
 
         // Persist if we have a shared root
