@@ -24,6 +24,12 @@ export interface Task {
   maxRetry: number;
   failureReason?: string;
   stage?: SprintStage;
+  // M5: Task dependency chain
+  blockedBy: string[];  // Task IDs that must complete before this task can start
+  blocks: string[];     // Task IDs that are blocked by this task
+  // M5: Task locking
+  lockedBy?: string;    // Agent ID that currently holds the lock
+  lockedAt?: string;    // Timestamp when the lock was acquired
 }
 
 export interface Project {
@@ -66,6 +72,12 @@ export function loadBoard(sharedRoot: string): TaskBoard {
     for (const project of parsed.projects) {
       if (!project.currentStage) project.currentStage = "plan";
       if (!project.stageHistory) project.stageHistory = [];
+      // M5: Migrate tasks that lack dependency/lock fields
+      for (const task of project.tasks) {
+        if (!task.blockedBy) task.blockedBy = [];
+        if (!task.blocks) task.blocks = [];
+        // lockedBy and lockedAt are optional, no migration needed
+      }
     }
     return parsed;
   } catch {
@@ -123,6 +135,7 @@ export function addTask(
     contentType?: string;
     subagentPrompt?: string;
     maxRetry?: number;
+    blockedBy?: string[];
   },
 ): Task {
   const task: Task = {
@@ -135,6 +148,8 @@ export function addTask(
     subagentPrompt: params.subagentPrompt,
     retryCount: 0,
     maxRetry: params.maxRetry ?? 2,
+    blockedBy: params.blockedBy ?? [],
+    blocks: [],
   };
   project.tasks.push(task);
   return task;
@@ -151,7 +166,17 @@ export function updateTaskStatus(
     reviewStatus?: "pending" | "approved" | "rejected";
     reviewReason?: string;
   },
+  board?: TaskBoard,
 ): void {
+  // M5-08: Check dependencies before dispatching
+  if (status === "dispatched" && board) {
+    if (isTaskBlocked(board, task)) {
+      // Cannot dispatch a blocked task - leave status unchanged
+      // The caller should check isTaskBlocked before calling updateTaskStatus
+      return;
+    }
+  }
+
   task.status = status;
   if (extra?.sessionKey !== undefined) task.sessionKey = extra.sessionKey;
   if (extra?.resultText !== undefined) task.resultText = extra.resultText;
@@ -166,6 +191,18 @@ export function updateTaskStatus(
   }
   if (status === "completed" || status === "failed") {
     task.completedAt = now;
+  }
+
+  // M5-09: Auto-unblock downstream tasks when this task completes/approves
+  if (board && (status === "completed" || status === "approved")) {
+    const downstreamTasks = getDownstreamTasks(board, task.id);
+    for (const downstreamTask of downstreamTasks) {
+      // Check if all dependencies are now satisfied
+      if (!isTaskBlocked(board, downstreamTask)) {
+        // The task is now ready - this could trigger a notification
+        // or auto-dispatch if configured
+      }
+    }
   }
 }
 
@@ -398,4 +435,203 @@ export function formatBoardDisplay(board: TaskBoard): string {
     lines.push("");
   }
   return lines.join("\n").trimEnd();
+}
+
+// ============================================================================
+// M5: Task Dependency Chain Functions
+// ============================================================================
+
+/**
+ * Check if a task is blocked by incomplete dependencies.
+ * Returns true if any task in blockedBy is not completed/approved.
+ */
+export function isTaskBlocked(board: TaskBoard, task: Task): boolean {
+  if (task.blockedBy.length === 0) {
+    return false;
+  }
+
+  // Find all tasks that this task is waiting on
+  for (const blockingTaskId of task.blockedBy) {
+    const blockingTask = findTaskById(board, blockingTaskId);
+    if (blockingTask && blockingTask.status !== "completed" && blockingTask.status !== "approved") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Find a task by ID across all projects.
+ */
+export function findTaskById(board: TaskBoard, taskId: string): Task | undefined {
+  for (const project of board.projects) {
+    const task = project.tasks.find((t) => t.id === taskId);
+    if (task) return task;
+  }
+  return undefined;
+}
+
+/**
+ * Find a task by label within a project.
+ */
+export function findTaskByLabel(project: Project, label: string): Task | undefined {
+  return project.tasks.find((t) => t.label === label);
+}
+
+/**
+ * Attempt to acquire a lock on a task for an agent.
+ * Returns true if successful, false if already locked by another agent.
+ */
+export function acquireTaskLock(board: TaskBoard, taskId: string, agentId: string): boolean {
+  const task = findTaskById(board, taskId);
+  if (!task) {
+    return false;
+  }
+
+  // Already locked by same agent - allow re-entry
+  if (task.lockedBy === agentId) {
+    return true;
+  }
+
+  // Locked by different agent - deny
+  if (task.lockedBy && task.lockedBy !== agentId) {
+    return false;
+  }
+
+  // Not locked - acquire
+  task.lockedBy = agentId;
+  task.lockedAt = new Date().toISOString();
+  return true;
+}
+
+/**
+ * Release a task lock.
+ */
+export function releaseTaskLock(board: TaskBoard, taskId: string): void {
+  const task = findTaskById(board, taskId);
+  if (task) {
+    task.lockedBy = undefined;
+    task.lockedAt = undefined;
+  }
+}
+
+/**
+ * Get all downstream tasks that depend on this task.
+ */
+export function getDownstreamTasks(board: TaskBoard, taskId: string): Task[] {
+  const downstream: Task[] = [];
+  for (const project of board.projects) {
+    for (const task of project.tasks) {
+      if (task.blockedBy.includes(taskId)) {
+        downstream.push(task);
+      }
+    }
+  }
+  return downstream;
+}
+
+/**
+ * Detect if adding a dependency would create a cycle.
+ * Returns the cycle path if detected, null otherwise.
+ */
+export function detectDependencyCycle(board: TaskBoard, taskId: string, newDependencyId?: string): string[] | null {
+  const visited = new Set<string>();
+  const path: string[] = [];
+
+  function dfs(currentId: string): string[] | null {
+    if (visited.has(currentId)) {
+      // Found a cycle - return the cycle path
+      const cycleStart = path.indexOf(currentId);
+      if (cycleStart >= 0) {
+        return path.slice(cycleStart);
+      }
+      return null;
+    }
+
+    const task = findTaskById(board, currentId);
+    if (!task) return null;
+
+    visited.add(currentId);
+    path.push(currentId);
+
+    // Check all dependencies (including the new one being added)
+    const deps = [...task.blockedBy];
+    if (newDependencyId && currentId === taskId) {
+      deps.push(newDependencyId);
+    }
+
+    for (const depId of deps) {
+      const cycle = dfs(depId);
+      if (cycle) return cycle;
+    }
+
+    path.pop();
+    return null;
+  }
+
+  return dfs(taskId);
+}
+
+/**
+ * Add a dependency: task A blocks task B.
+ * Automatically updates both tasks' blockedBy and blocks arrays.
+ * Returns true if successful, false if would create cycle.
+ */
+export function addTaskDependency(
+  board: TaskBoard,
+  blockingTaskId: string,
+  blockedTaskId: string,
+): { success: boolean; error?: string } {
+  const blockingTask = findTaskById(board, blockingTaskId);
+  const blockedTask = findTaskById(board, blockedTaskId);
+
+  if (!blockingTask || !blockedTask) {
+    return { success: false, error: "Task not found" };
+  }
+
+  // Check for existing dependency
+  if (blockedTask.blockedBy.includes(blockingTaskId)) {
+    return { success: false, error: "Dependency already exists" };
+  }
+
+  // Check for cycle
+  const cycle = detectDependencyCycle(board, blockedTaskId, blockingTaskId);
+  if (cycle) {
+    return { success: false, error: `Would create cycle: ${cycle.join(" → ")}` };
+  }
+
+  // Add dependency
+  blockedTask.blockedBy.push(blockingTaskId);
+  blockingTask.blocks.push(blockedTaskId);
+
+  return { success: true };
+}
+
+/**
+ * Remove a dependency between tasks.
+ */
+export function removeTaskDependency(board: TaskBoard, blockingTaskId: string, blockedTaskId: string): void {
+  const blockingTask = findTaskById(board, blockingTaskId);
+  const blockedTask = findTaskById(board, blockedTaskId);
+
+  if (blockingTask) {
+    blockingTask.blocks = blockingTask.blocks.filter((id) => id !== blockedTaskId);
+  }
+
+  if (blockedTask) {
+    blockedTask.blockedBy = blockedTask.blockedBy.filter((id) => id !== blockingTaskId);
+  }
+}
+
+/**
+ * Get all tasks that are ready to be dispatched (not blocked, not locked, pending status).
+ */
+export function getReadyTasks(project: Project, board: TaskBoard): Task[] {
+  return project.tasks.filter((task) => {
+    if (task.status !== "pending") return false;
+    if (task.lockedBy) return false;
+    if (isTaskBlocked(board, task)) return false;
+    return true;
+  });
 }

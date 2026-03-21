@@ -19,6 +19,16 @@ import {
   formatBoardDisplay,
   generateTaskId,
   generateProjectId,
+  // M5: Task dependency chain functions
+  isTaskBlocked,
+  findTaskById,
+  acquireTaskLock,
+  releaseTaskLock,
+  getDownstreamTasks,
+  detectDependencyCycle,
+  addTaskDependency,
+  removeTaskDependency,
+  getReadyTasks,
 } from "../src/task-board.ts";
 import type { TaskBoard } from "../src/task-board.ts";
 
@@ -492,5 +502,245 @@ describe("getProject", () => {
   it("returns undefined for unknown id", () => {
     const board = createEmptyBoard();
     assert.equal(getProject(board, "nonexistent"), undefined);
+  });
+});
+
+// ── M5: Task Dependency Chain ───────────────────────────────────────────────
+
+describe("Task Dependency Chain", () => {
+  describe("isTaskBlocked", () => {
+    it("returns false for task with no dependencies", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const task = addTask(project, { trackId: "t", label: "Task A" });
+      assert.equal(isTaskBlocked(board, task), false);
+    });
+
+    it("returns true when dependency is not completed", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      taskA.blocks.push(taskB.id);
+
+      assert.equal(isTaskBlocked(board, taskB), true);
+    });
+
+    it("returns false when dependency is completed", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      taskA.blocks.push(taskB.id);
+
+      taskA.status = "completed";
+      assert.equal(isTaskBlocked(board, taskB), false);
+    });
+
+    it("returns false when dependency is approved", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+
+      taskA.status = "approved";
+      assert.equal(isTaskBlocked(board, taskB), false);
+    });
+
+    it("handles multiple dependencies (all must complete)", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B" });
+      const taskC = addTask(project, { trackId: "t3", label: "Task C", blockedBy: [taskA.id, taskB.id] });
+
+      // Only A completed - still blocked
+      taskA.status = "completed";
+      assert.equal(isTaskBlocked(board, taskC), true);
+
+      // Both completed - not blocked
+      taskB.status = "completed";
+      assert.equal(isTaskBlocked(board, taskC), false);
+    });
+  });
+
+  describe("acquireTaskLock / releaseTaskLock", () => {
+    it("acquires lock for unlocked task", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const task = addTask(project, { trackId: "t", label: "Task" });
+
+      const result = acquireTaskLock(board, task.id, "agent-1");
+      assert.equal(result, true);
+      assert.equal(task.lockedBy, "agent-1");
+      assert.ok(task.lockedAt);
+    });
+
+    it("allows re-entry by same agent", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const task = addTask(project, { trackId: "t", label: "Task" });
+
+      acquireTaskLock(board, task.id, "agent-1");
+      const result = acquireTaskLock(board, task.id, "agent-1");
+      assert.equal(result, true);
+    });
+
+    it("denies lock when held by different agent", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const task = addTask(project, { trackId: "t", label: "Task" });
+
+      acquireTaskLock(board, task.id, "agent-1");
+      const result = acquireTaskLock(board, task.id, "agent-2");
+      assert.equal(result, false);
+      assert.equal(task.lockedBy, "agent-1");
+    });
+
+    it("releases lock", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const task = addTask(project, { trackId: "t", label: "Task" });
+
+      acquireTaskLock(board, task.id, "agent-1");
+      releaseTaskLock(board, task.id);
+      assert.equal(task.lockedBy, undefined);
+      assert.equal(task.lockedAt, undefined);
+    });
+
+    it("fails gracefully for non-existent task", () => {
+      const board = createEmptyBoard();
+      const result = acquireTaskLock(board, "nonexistent", "agent-1");
+      assert.equal(result, false);
+    });
+  });
+
+  describe("getDownstreamTasks", () => {
+    it("returns tasks that depend on the given task", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      const taskC = addTask(project, { trackId: "t3", label: "Task C", blockedBy: [taskA.id] });
+      const taskD = addTask(project, { trackId: "t4", label: "Task D" }); // No dependency
+
+      const downstream = getDownstreamTasks(board, taskA.id);
+      assert.equal(downstream.length, 2);
+      assert.ok(downstream.includes(taskB));
+      assert.ok(downstream.includes(taskC));
+      assert.ok(!downstream.includes(taskD));
+    });
+  });
+
+  describe("detectDependencyCycle", () => {
+    it("returns null for no cycle", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+
+      const cycle = detectDependencyCycle(board, taskB.id);
+      assert.equal(cycle, null);
+    });
+
+    it("detects direct self-dependency", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A", blockedBy: ["task-self"] });
+      taskA.id = "task-self";
+
+      const cycle = detectDependencyCycle(board, taskA.id);
+      assert.ok(cycle);
+    });
+
+    it("detects indirect cycle", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      const taskC = addTask(project, { trackId: "t3", label: "Task C", blockedBy: [taskB.id] });
+
+      // Create cycle: A -> B -> C -> A
+      taskA.blockedBy.push(taskC.id);
+
+      const cycle = detectDependencyCycle(board, taskA.id);
+      assert.ok(cycle);
+      assert.ok(cycle!.length >= 2);
+    });
+  });
+
+  describe("addTaskDependency", () => {
+    it("adds dependency successfully", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B" });
+
+      const result = addTaskDependency(board, taskA.id, taskB.id);
+      assert.equal(result.success, true);
+      assert.ok(taskB.blockedBy.includes(taskA.id));
+      assert.ok(taskA.blocks.includes(taskB.id));
+    });
+
+    it("rejects duplicate dependency", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B" });
+
+      addTaskDependency(board, taskA.id, taskB.id);
+      const result = addTaskDependency(board, taskA.id, taskB.id);
+      assert.equal(result.success, false);
+      assert.ok(result.error?.includes("already exists"));
+    });
+
+    it("rejects cycle-creating dependency", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      const taskC = addTask(project, { trackId: "t3", label: "Task C", blockedBy: [taskB.id] });
+
+      // Try to create A -> B -> C -> A cycle
+      const result = addTaskDependency(board, taskC.id, taskA.id);
+      assert.equal(result.success, false);
+      assert.ok(result.error?.includes("cycle"));
+    });
+  });
+
+  describe("getReadyTasks", () => {
+    it("returns pending tasks that are not blocked or locked", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      const taskB = addTask(project, { trackId: "t2", label: "Task B", blockedBy: [taskA.id] });
+      const taskC = addTask(project, { trackId: "t3", label: "Task C" });
+
+      const ready = getReadyTasks(project, board);
+      assert.equal(ready.length, 2);
+      assert.ok(ready.includes(taskA));
+      assert.ok(ready.includes(taskC));
+      assert.ok(!ready.includes(taskB));
+    });
+
+    it("excludes locked tasks", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      acquireTaskLock(board, taskA.id, "agent-1");
+
+      const ready = getReadyTasks(project, board);
+      assert.equal(ready.length, 0);
+    });
+
+    it("excludes non-pending tasks", () => {
+      const board = createEmptyBoard();
+      const project = createProject(board, { name: "P", request: "r" });
+      const taskA = addTask(project, { trackId: "t1", label: "Task A" });
+      taskA.status = "dispatched";
+
+      const ready = getReadyTasks(project, board);
+      assert.equal(ready.length, 0);
+    });
   });
 });
